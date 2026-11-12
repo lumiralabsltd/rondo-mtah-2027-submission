@@ -121,6 +121,26 @@ games and do occur in the public 5 minutes. v3 added steps 1–3 (learned scene 
 touches); v4 added the official definition of a change, the touch sequence and the per-possession
 weighting.
 
+### Where we drew the line
+
+The model is learned, but the labels it learns from, and the decoder, encode these rules:
+
+- **Loose balls** stay with the last team in control. The two-state decoder never leaves "who has
+  it" undecided, and a change has to pay the switch cost, so a ball nobody controls (in the air,
+  bouncing, rolling between players) keeps the previous team.
+- **Touches without control** are not changes: a clearance, a header, a deflection of a pass that
+  is not an interception, a miscontrol. In the training labels, a lone pass or lost ball by one team
+  between two events of the other is given to the team already in possession; in the model, the
+  touch-sequence features tell a lone touch from two in a row.
+- **Challenges and duels** are not changes by themselves (the labels skip challenge events, since
+  both teams are in them). Possession changes when the winner's team then controls the ball.
+- **Interceptions and tackles that keep the ball** are changes, placed at the first controlled touch
+  of the new team.
+- **Restarts**: dead ball is `D` and has no owner. Each stretch of live play is decided afresh, so
+  the team taking the restart gets it from its own first touches, not from who had the ball before
+  the stoppage.
+- **Abstain** only where a stretch of play has no ball information at all (0.2% of graded frames).
+
 ## 4. Short possessions, and Smart Tagging (what we tried)
 
 **How short is a possession?** The answer keys differ:

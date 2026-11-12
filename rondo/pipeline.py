@@ -66,7 +66,7 @@ def summarise(match, labels):
                 spells += 1
             current = label
     print("graded frames  H {H}  A {A}  D {D}  X {X}".format(**counts))
-    print("possessions    {}  (the real match has far fewer than raw nearest-player guesses)"
+    print("possessions    {}  (on graded frames, counted the way the scorer counts them)"
           .format(spells))
 
 
