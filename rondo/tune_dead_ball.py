@@ -73,7 +73,7 @@ def build():
     global MODEL
     MODEL = possession.load_model()
     for g, (name, frames, dead) in enumerate(deadball_run.sample_games()):
-        truth = tp.truth_codes(tp.on_ball_events(deadball_run.restart_file(name)), dead)
+        truth = tp.sample_truth(name, dead)
         restarts = labels.restarts_from_events(deadball_run.restart_file(name))
         for s, (visible, beyond, rate) in enumerate(deadball_tune.SCENARIOS):
             x = frames

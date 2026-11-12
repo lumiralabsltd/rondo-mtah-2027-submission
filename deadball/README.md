@@ -159,13 +159,14 @@ and scoring spellF1, one setting at a time, two passes, with the same tie rule. 
 0.5 -> 1.0, `w_ball_still` 1.0 -> 0.5, `exit` 1.0 -> 1.5, `min_dead_s` 3 -> 5 and the edge snapping
 (`snap_start_fwd_s` 2 -> 1, `snap_end_back_s` 3 -> 4, `snap_end_fwd_s` 1 -> 0.5). Pipeline spellF1
 0.576 -> 0.593, and stoppage F1 over the 10 scenarios rose too: 0.751 -> 0.778, worst 0.636 -> 0.737.
-Re-running `tune.py` on its own would undo this, so run `tune_dead_ball` after it.
+Re-running `tune.py` on its own would undo this, so run `tune_dead_ball` after it. Re-run on top of
+the v4 possession model and the official-definition labels, it changed nothing.
 
 ### DFL open data (independent check)
 
 `python get_dfl.py` files the hand-downloaded DFL XMLs (Figshare blocks scripted downloads), and
 `../.venv/bin/python -m rondo.check_dfl` (from the repo root) scores the whole pipeline on them
-against the provider's own ball status. Never tuned on: stoppage F1 0.856 over 2 matches x 8 runs.
+against the provider's own ball status. Never tuned on: stoppage F1 0.856 over 2 matches x 16 runs.
 
 ## Caveats
 

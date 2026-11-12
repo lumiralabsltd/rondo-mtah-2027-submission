@@ -10,7 +10,7 @@ X is a real tool on the ranking metric: the scorer replaces an X with the previo
 inside a possession (ball lost behind a crowd) X is free and safer than a guess; at a hand-over,
 guess, or the old team gets carried across. See EVALUATION.md "How an abstention is scored".
 
-Version 3 — a model learned on external data only (Metrica's open sample games):
+Version 4 — a model learned on external data only (Metrica's open sample games):
 
   1. Clean the ball track: each seen ball position is averaged with its neighbours (5 frames,
      which takes out tracking jitter), and gaps of up to 1 s inside live play are filled with a
@@ -23,23 +23,27 @@ Version 3 — a model learned on external data only (Metrica's open sample games
   3. Context: that evidence summed over windows before and after the frame (0.04 s to 10 s), the
      team of the last and next strong piece of evidence, and the team of the last and next touch
      (the ball changes speed or direction right next to a player), fading with time.
-  4. A logistic regression with no intercept (so neither team is favoured) turns those into one
+  4. Touch sequence: the team of the last two and the next two touches, and touches per team in
+     the 0.5 / 1 / 3 s either side. A lone touch by one team between two of the other's is a
+     deflection; two in a row is control (v4).
+  5. A logistic regression with no intercept (so neither team is favoured) turns those into one
      score per frame: the log-odds that Barça has the ball.
-  5. For each stretch of live play, a two-state model (H / A) picks the labelling that agrees most
+  6. For each stretch of live play, a two-state model (H / A) picks the labelling that agrees most
      with the scores, paying SWITCH_COST for every change of possession (Viterbi).
-  6. A stretch of play with no ball information at all is X.
+  7. A stretch of play with no ball information at all is X.
 
 Everything learned (the table, the weights, the switch cost) is in possession_model.json, written
 by rondo/train_possession.py from the sample games under simulated dropout and tracking noise.
-The organisers' rules clarification (2026-11-06) forbids training or tuning on our match's ground
-truth or video, and nothing here has seen either. The constants below are fixed design choices,
-not tuned values.
+v4 learns the official definition of a change (a touch without control is not one), and weights
+every possession equally-ish in training (1 / sqrt(length)), because spellF1 counts a 1 s
+possession as much as a 30 s one. The organisers' rules clarification (2026-11-06) forbids
+training or tuning on our match's ground truth or video, and nothing here has seen either. The
+constants below are fixed design choices, not tuned values.
 
-Version 2 (commit f91eff9) was step 5 alone, on "nearest player within 3 m" evidence.
+Version 3 (commit a25bec1) was steps 1-3 and 5-7, trained on every touch with equal frame weights.
+Version 2 (commit f91eff9) was step 6 alone, on "nearest player within 3 m" evidence.
 
 Ideas not done yet:
-  - Smart Tagging phases (BUILD UP, PROGRESSION, ...) carry a Team — evidence, not answers, but
-    the sample games have no tags to learn a weight from
   - team shape (the side in possession spreads out) for the stretches with no ball
 """
 
@@ -65,6 +69,9 @@ STRONG = (0.75, 1.5, 2.5)                      # log-odds, what counts as strong
 TAUS = (5, 25, 125)                            # frames, how fast the last / next team fades
 TOUCHES = ((3, 5.0, 1.5), (3, 10.0, 2.0),      # (frames either side, velocity change m/s,
            (6, 5.0, 1.5), (6, 10.0, 2.0))      #  nearest player within m) = a touch
+SEQUENCE = ((3, 5.0, 1.5), (6, 10.0, 2.0))     # the touches the touch-sequence features use
+SEQUENCE_FADE = 50                             # frames
+SEQUENCE_WINDOWS = (12, 25, 75)                # frames, touches per team before / after
 
 
 def load_model(path=MODEL_PATH):
@@ -180,10 +187,42 @@ def features(geo, alive, scene_llr):
         for tau in TAUS:
             columns += list(last_and_next(strong, tau))
     for k, change, within in TOUCHES:
-        touch = np.where((geo["change"][k] > change) & (geo["nearest"] < within) & alive, sign, 0.0)
+        touch = touches(geo, alive, k, change, within)
         for tau in TAUS:
             columns += list(last_and_next(touch, tau))
+    for k, change, within in SEQUENCE:
+        columns += touch_sequence(touches(geo, alive, k, change, within))
     return np.stack(columns, axis=1)
+
+
+def touches(geo, alive, k, change, within):
+    """+1 / -1 on frames where a Barça / Athletic player touches the ball, 0 elsewhere."""
+    sign = np.where(geo["team"] == HOME, 1.0, -1.0)
+    return np.where((geo["change"][k] > change) & (geo["nearest"] < within) & alive, sign, 0.0)
+
+
+def touch_sequence(touch):
+    """Team of the last two and next two touches (fading), and touches per team either side."""
+    n = len(touch)
+    index = np.arange(n)
+    hits = np.flatnonzero(touch != 0)
+    columns = []
+    at_or_after = np.searchsorted(hits, index, side="left")
+    for back in (1, 2):
+        h = at_or_after - back
+        ok = h >= 0
+        frame = hits[np.maximum(h, 0)] if len(hits) else index
+        columns.append(np.where(ok, touch[frame] * np.exp(-(index - frame) / SEQUENCE_FADE), 0.0))
+    after = np.searchsorted(hits, index, side="right")
+    for ahead in (0, 1):
+        h = after + ahead
+        ok = h < len(hits)
+        frame = hits[np.minimum(h, len(hits) - 1)] if len(hits) else index
+        columns.append(np.where(ok, touch[frame] * np.exp(-(frame - index) / SEQUENCE_FADE), 0.0))
+    for k in SEQUENCE_WINDOWS:
+        before, later = window_sums(touch, k)
+        columns += [before / 3.0, later / 3.0]
+    return columns
 
 
 def window_sums(x, k):

@@ -9,7 +9,7 @@ truth, and from a different provider than the sample games everything was tuned 
 closest thing we have to a held-out test. Prints aggregates only (external data).
 
 Runs per match: ball in stoppages as tracked or blanked x live-play ball dropout 20% / 40% x
-tracking clean / noisy (train_possession's "both") = 8.
+train_possession's 4 tracking conditions (clean, ball jitter, player jitter and loss, both) = 16.
 """
 
 import glob
@@ -67,8 +67,8 @@ def main(predict_team=None):
             alive = ~rules.detect(features.compute(x), x.fps)
             stop = evaluate.scores(dead, ~alive)["stoppage_f1"]
             clean = tp.match_from_frames(x)
-            for k, noise in enumerate(("clean", "both")):
-                match = tp.add_noise(clean, *tp.NOISE[noise], seed=9000 + 100 * g + 10 * s + k)
+            for k, noise in enumerate(sorted(tp.NOISE)):
+                match = tp.add_noise(clean, *tp.NOISE[noise], seed=7000 + 1000 * g + 10 * s + k)
                 full = tp.spell_f1(truth, alive, predict_team(match, alive))
                 true_alive = ~dead
                 perfect_dead = tp.spell_f1(truth, true_alive, predict_team(match, true_alive))
@@ -83,7 +83,7 @@ def main(predict_team=None):
 
     print("\nspellF1 of the whole pipeline (and with a perfect dead ball), stoppage F1 of the detector")
     for key, values in (("match", sorted({r["match"] for r in rows})), ("stoppages", ("tracked", "blanked")),
-                        ("noise", ("clean", "both"))):
+                        ("noise", sorted(tp.NOISE))):
         for value in values:
             print("  {:<9} {:<8} spellF1 {:.3f}   with perfect dead ball {:.3f}   stoppage F1 {:.3f}".format(
                 key, value, mean("full", **{key: value}), mean("perfect_dead", **{key: value}),
