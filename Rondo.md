@@ -179,6 +179,11 @@ The absolute level is lower than on the sample games because the labels are a di
 (the provider's possession flag rather than events), but the gain from v2 to v3 is the same size,
 and the dead-ball detector, never tuned on DFL, holds up.
 
+We also tested training the possession model on the two DFL matches as well as the sample games,
+with the rule fixed before running (each of the 5 games scored by a model that never saw it; adopt
+only if the mean beats the sample-games-only model by more than 0.002). It did not help (0.551 vs
+0.551), so the model stays trained on the sample games alone and DFL stays a pure check.
+
 **Public 5 minutes** (17 possessions, 4 stoppages; a check, not a score):
 
 | | spellF1 | macroF1 | possessions (true 17) |
