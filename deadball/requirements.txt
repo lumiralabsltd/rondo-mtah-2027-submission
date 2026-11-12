@@ -1,0 +1,3 @@
+numpy
+pandas
+kloppy==3.18.0

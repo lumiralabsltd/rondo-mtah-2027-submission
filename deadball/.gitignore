@@ -1,0 +1,7 @@
+data/
+.venv/
+__pycache__/
+*.csv
+viewer/data/
+.claude/
+results/

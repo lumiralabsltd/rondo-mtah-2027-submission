@@ -1,0 +1,1022 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rondo Dead-ball Console</title>
+<style>
+  :root {
+    --bg: #08090b;
+    --panel: #0d0f12;
+    --panel-2: #121519;
+    --line: #1f242b;
+    --line-2: #2c333c;
+    --ink: #d8dde3;
+    --ink-2: #f4f6f8;
+    --muted: #78818c;
+    --faint: #464e58;
+    --signal: #ffb000;      /* focus / selection, as in a CV overlay */
+    --home: #3d9bff;
+    --away: #e9ecef;
+    --ball: #ffb000;
+    --dead: #ff3b30;
+    --live: #2bd67b;
+    --track: #161a1f;
+    --miss: #c86bff;
+    --extra: #ffb000;
+    --edge: #5f6873;
+    --pass: #2bd67b;
+    --part: #ffb000;
+    --todo: #ff3b30;
+    --na: #5f6873;
+    --pitch: #0b100e;
+    --pitch-line: rgba(220, 235, 228, 0.28);
+    --pitch-grid: rgba(220, 235, 228, 0.05);
+    --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    --gap: 8px;
+  }
+  :root[data-theme="light"] {
+    --bg: #e9ecef; --panel: #f7f8f9; --panel-2: #eef0f2; --line: #d5d9de; --line-2: #c3c9d0;
+    --ink: #1b2027; --ink-2: #0b0e12; --muted: #5d6671; --faint: #a3abb5; --track: #e2e6ea;
+    --away: #1b2027; --home: #0a6fdc; --signal: #c77d00; --ball: #c77d00; --extra: #c77d00; --part: #c77d00;
+    --pitch: #dfe6e2; --pitch-line: rgba(20, 40, 30, 0.45); --pitch-grid: rgba(20, 40, 30, 0.07);
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #e9ecef; --panel: #f7f8f9; --panel-2: #eef0f2; --line: #d5d9de; --line-2: #c3c9d0;
+      --ink: #1b2027; --ink-2: #0b0e12; --muted: #5d6671; --faint: #a3abb5; --track: #e2e6ea;
+      --away: #1b2027; --home: #0a6fdc; --signal: #c77d00; --ball: #c77d00; --extra: #c77d00; --part: #c77d00;
+      --pitch: #dfe6e2; --pitch-line: rgba(20, 40, 30, 0.45); --pitch-grid: rgba(20, 40, 30, 0.07);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 11px/1.4 var(--mono); overflow: hidden; }
+  button, select, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 1px solid var(--signal); outline-offset: 1px; }
+  .dim { color: var(--muted); }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .shell { height: 100vh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+
+  /* -- header ---------------------------------------------------------------------------------- */
+  .bar { display: flex; align-items: stretch; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .bar > * { display: flex; align-items: center; padding: 0 12px; border-right: 1px solid var(--line); }
+  .brand { gap: 8px; font-weight: 700; letter-spacing: 0.12em; color: var(--ink-2); white-space: nowrap; }
+  .brand .sq { width: 8px; height: 8px; background: var(--signal); }
+  .brand .ver { color: var(--muted); font-weight: 400; letter-spacing: 0.04em; }
+  .src { gap: 8px; }
+  select {
+    appearance: none; background: transparent; border: 1px solid var(--line-2); padding: 3px 22px 3px 7px; border-radius: 0; cursor: pointer;
+    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: right 9px center, right 5px center; background-size: 4px 4px; background-repeat: no-repeat;
+  }
+  .scenario { color: var(--muted); white-space: nowrap; }
+  .readouts { flex: 1; justify-content: flex-end; gap: 0; padding: 0; border-right: 0; }
+  .ro { padding: 6px 12px; border-left: 1px solid var(--line); min-width: 0; }
+  .ro .k { color: var(--muted); font-size: 9px; letter-spacing: 0.1em; white-space: nowrap; }
+  .ro .v { color: var(--ink-2); font-size: 15px; font-weight: 600; white-space: nowrap; }
+  .ro .v small { color: var(--muted); font-size: 10px; font-weight: 400; }
+  .ro.hi .v { color: var(--signal); }
+  .theme { cursor: pointer; background: none; border: 0; border-left: 1px solid var(--line); padding: 0 12px; color: var(--muted); }
+  .theme:hover { color: var(--ink-2); }
+
+  /* -- panels ---------------------------------------------------------------------------------- */
+  .grid { display: grid; gap: var(--gap); padding: var(--gap); min-height: 0; grid-template-columns: minmax(0, 1fr) 330px 350px; }
+  .col { display: flex; flex-direction: column; gap: var(--gap); min-height: 0; min-width: 0; }
+  .panel {
+    position: relative; background: var(--panel); border: 1px solid var(--line); min-width: 0; min-height: 0;
+    display: flex; flex-direction: column;
+  }
+  /* corner ticks */
+  .panel::before, .panel::after {
+    content: ""; position: absolute; width: 6px; height: 6px; border-color: var(--faint); border-style: solid; pointer-events: none;
+  }
+  .panel::before { top: -1px; left: -1px; border-width: 1px 0 0 1px; }
+  .panel::after { bottom: -1px; right: -1px; border-width: 0 1px 1px 0; }
+  .ph {
+    display: flex; align-items: center; gap: 10px; height: 26px; padding: 0 10px; border-bottom: 1px solid var(--line);
+    flex: none; color: var(--muted); letter-spacing: 0.08em; font-size: 10px; white-space: nowrap;
+  }
+  .ph b { color: var(--ink-2); font-weight: 600; }
+  .ph .id { color: var(--faint); }
+  .ph .r { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+  .scroll { overflow: auto; min-height: 0; }
+  .scroll::-webkit-scrollbar { width: 6px; }
+  .scroll::-webkit-scrollbar-thumb { background: var(--line-2); }
+  .key { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
+  .key i { width: 8px; height: 8px; display: inline-block; border: 1px solid currentColor; }
+
+  /* pitch */
+  .pitch-panel { flex: 1; }
+  .pitch-panel.dead { border-color: var(--dead); }
+  .pitch-box { flex: 1; min-height: 0; position: relative; }
+  .pitch-box canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+  .transport { display: flex; align-items: stretch; border-top: 1px solid var(--line); flex: none; height: 30px; }
+  .transport > * { display: flex; align-items: center; padding: 0 10px; border-right: 1px solid var(--line); gap: 8px; white-space: nowrap; }
+  .transport button { background: none; border: 0; cursor: pointer; color: var(--ink); height: 100%; padding: 0 10px; }
+  .transport button:hover { background: var(--panel-2); }
+  .transport .play { color: var(--signal); font-weight: 700; min-width: 76px; justify-content: center; }
+  .speed button { padding: 0 6px; color: var(--muted); }
+  .speed button[aria-pressed="true"] { color: var(--ink-2); box-shadow: inset 0 -2px 0 var(--signal); }
+  .transport .grow { flex: 1; border-right: 0; justify-content: flex-end; color: var(--muted); gap: 12px; }
+  .transport label { cursor: pointer; color: var(--muted); display: flex; gap: 5px; align-items: center; }
+  .transport input { accent-color: var(--signal); margin: 0; }
+  kbd { border: 1px solid var(--line-2); padding: 0 3px; color: var(--ink); font: inherit; font-size: 9px; }
+
+  /* timeline */
+  .tl-panel { flex: none; }
+  .tl-body { padding: 6px 10px 4px; position: relative; }
+  #timeline { width: 100%; height: 66px; display: block; cursor: crosshair; }
+  #zoom { width: 100%; height: 86px; display: block; margin-top: 4px; }
+  .tip { position: absolute; display: none; pointer-events: none; background: var(--ink-2); color: var(--bg); padding: 1px 5px; font-size: 10px; transform: translateX(-50%); white-space: nowrap; z-index: 2; }
+
+  /* camera */
+  .camera { position: relative; aspect-ratio: 16 / 9; background: #000; overflow: hidden; flex: none; }
+  .camera video, .camera canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .camera video { object-fit: contain; }
+  .camera [hidden] { display: none !important; }
+  .camera .empty {
+    position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 4px; padding: 14px; color: #7b848e;
+    background:
+      repeating-linear-gradient(0deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 3px),
+      #07080a;
+  }
+  .camera .empty b { color: #c9d0d7; letter-spacing: 0.14em; font-weight: 600; }
+  .camera.big { position: fixed; inset: 5vh 5vw; z-index: 20; aspect-ratio: auto; border: 1px solid var(--line-2); }
+  .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 19; display: none; }
+  .scrim.on { display: block; }
+  .icon { background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0; }
+  .icon:hover { color: var(--ink-2); }
+
+  /* state table */
+  .state-panel { flex: 1; }
+  .state-head { display: grid; grid-template-columns: 1fr 1fr 1fr; border-bottom: 1px solid var(--line); flex: none; }
+  .state-head > div { padding: 6px 10px; border-right: 1px solid var(--line); }
+  .state-head > div:last-child { border-right: 0; }
+  .state-head .k { color: var(--muted); font-size: 9px; letter-spacing: 0.1em; }
+  .state-head .v { font-size: 14px; font-weight: 700; letter-spacing: 0.06em; margin-top: 2px; }
+  .v.dead { color: var(--dead); }
+  .v.live { color: var(--live); }
+  .v.warn { color: var(--signal); }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; color: var(--faint); font-weight: 500; font-size: 9px; letter-spacing: 0.1em; padding: 5px 10px 3px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); }
+  td { padding: 3px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td.r, th.r { text-align: right; }
+  tr.on td { color: var(--dead); }
+  tr.on td:first-child::before { content: "▸ "; }
+  .meter { display: inline-block; width: 46px; height: 5px; background: var(--track); vertical-align: middle; position: relative; }
+  .meter i { position: absolute; inset: 0 auto 0 0; background: var(--faint); }
+  tr.on .meter i { background: var(--dead); }
+
+  /* checklist */
+  .req-panel { flex: 1.7; }
+  .st { display: inline-block; width: 38px; text-align: center; font-weight: 700; font-size: 9px; letter-spacing: 0.06em; border: 1px solid currentColor; padding: 0 2px; }
+  .st.met { color: var(--pass); } .st.partial { color: var(--part); } .st.todo { color: var(--todo); } .st.na { color: var(--na); }
+  .reqs td { vertical-align: top; padding: 5px 10px; white-space: normal; }
+  .reqs td.t { color: var(--ink-2); }
+  .reqs .d { color: var(--muted); font-size: 10px; display: block; margin-top: 1px; }
+  .reqs .bar { height: 2px; background: var(--track); margin-top: 4px; position: relative; }
+  .reqs .bar i { position: absolute; inset: 0 auto 0 0; }
+  .reqs tr { cursor: help; }
+  .sum { display: flex; gap: 6px; }
+
+  /* errors */
+  .err-panel { flex: 1; }
+  .filters { display: flex; gap: 0; }
+  .filters button { background: none; border: 1px solid var(--line-2); margin-left: -1px; padding: 1px 6px; cursor: pointer; color: var(--muted); font-size: 9px; letter-spacing: 0.06em; }
+  .filters button[aria-pressed="true"] { color: var(--ink-2); border-color: var(--muted); position: relative; }
+  .errs tr { cursor: pointer; }
+  .errs tr:hover td, .errs tr.current td { background: var(--panel-2); }
+  .errs tr.current td:first-child { box-shadow: inset 2px 0 0 var(--signal); }
+  .sw { display: inline-block; width: 7px; height: 7px; margin-right: 6px; vertical-align: 0; }
+
+  /* status bar */
+  .status { display: flex; border-top: 1px solid var(--line); background: var(--panel); color: var(--muted); height: 22px; font-size: 10px; }
+  .status > span { display: flex; align-items: center; padding: 0 10px; border-right: 1px solid var(--line); gap: 6px; white-space: nowrap; }
+  .status b { color: var(--ink); font-weight: 500; }
+  .status .ok { width: 6px; height: 6px; background: var(--live); }
+  .status .grow { flex: 1; border-right: 0; justify-content: flex-end; }
+
+  #loading { position: fixed; inset: 0; display: grid; place-content: center; color: var(--muted); letter-spacing: 0.1em; background: var(--bg); z-index: 30; }
+  #loading[hidden] { display: none; }
+
+  @media (max-width: 1240px), (max-height: 640px) {
+    body { overflow: auto; }
+    .shell { height: auto; }
+    .bar { flex-wrap: wrap; }
+    .readouts { flex-wrap: wrap; justify-content: flex-start; width: 100%; border-top: 1px solid var(--line); }
+    .grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .col.a { grid-column: 1 / -1; }
+    .pitch-box { flex: none; aspect-ratio: 115 / 78; }
+    .scroll { max-height: 420px; }
+    .status { flex-wrap: wrap; height: auto; }
+  }
+  @media (max-width: 720px) {
+    .grid { grid-template-columns: minmax(0, 1fr); }
+    .transport { flex-wrap: wrap; height: auto; }
+    .transport .grow { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="bar">
+    <div class="brand"><span class="sq"></span>RONDO//DEADBALL <span class="ver">v0.4</span></div>
+    <div class="src"><span class="dim">SRC</span><select id="game" aria-label="Game"></select></div>
+    <div class="scenario" id="scenario">—</div>
+    <div class="readouts" id="kpis" aria-label="Headline numbers"></div>
+    <button class="theme" id="theme" aria-label="Toggle light and dark theme">THEME</button>
+  </header>
+
+  <main class="grid" id="app" hidden>
+    <div class="col a">
+      <section class="panel pitch-panel" id="pitch-panel">
+        <div class="ph"><span class="id">01</span><b>PITCH</b><span>TRACKING FEED · 2D</span>
+          <span class="r">
+            <span class="key" style="color:var(--home)"><i></i>HOME</span>
+            <span class="key" style="color:var(--away)"><i></i>AWAY</span>
+            <span class="key" style="color:var(--ball)"><i></i>BALL / NEAREST</span>
+          </span>
+        </div>
+        <div class="pitch-box"><canvas id="pitch" aria-label="Pitch playback with player detections"></canvas></div>
+        <div class="transport">
+          <button class="play" id="play">▶ PLAY</button>
+          <div class="speed" role="group" aria-label="Playback speed">
+            <button data-speed="1">1×</button><button data-speed="4" aria-pressed="true">4×</button><button data-speed="16">16×</button>
+          </div>
+          <div class="num"><span class="dim">T</span><b id="clock">00:00.0</b></div>
+          <div class="num"><span class="dim">F</span><b id="frame-no">000000</b></div>
+          <div class="grow">
+            <span><kbd>SPC</kbd> play <kbd>←→</kbd> 5s <kbd>,.</kbd> frame <kbd>N P</kbd> error</span>
+            <label><input type="checkbox" id="labels" checked> TAGS</label>
+            <label><input type="checkbox" id="hidden-ball" checked> HIDDEN BALL</label>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel tl-panel">
+        <div class="ph"><span class="id">02</span><b>TIMELINE</b><span>FULL MATCH · SCORE ±60S</span>
+          <span class="r">
+            <span class="key" style="color:var(--dead)"><i style="background:currentColor"></i>DEAD</span>
+            <span class="key" style="color:var(--miss)"><i style="background:currentColor"></i>MISSED</span>
+            <span class="key" style="color:var(--extra)"><i style="background:currentColor"></i>INVENTED</span>
+            <span class="key" style="color:var(--edge)"><i style="background:currentColor"></i>EDGE</span>
+          </span>
+        </div>
+        <div class="tl-body">
+          <div class="tip" id="tip"></div>
+          <canvas id="timeline" aria-label="Whole-match timeline. Click to seek."></canvas>
+          <canvas id="zoom" aria-label="Detector score around the playhead"></canvas>
+        </div>
+      </section>
+    </div>
+
+    <div class="col">
+      <section class="panel">
+        <div class="ph"><span class="id">03</span><b>CAMERA</b><span>TACTICAL · CAM 1</span>
+          <span class="r"><span id="cam-state">NO SIGNAL</span><button class="icon" id="enlarge" aria-label="Enlarge camera">[ ⤢ ]</button></span>
+        </div>
+        <div class="camera" id="camera">
+          <video id="video" playsinline preload="auto" hidden></video>
+          <canvas id="overlay" hidden></canvas>
+          <div class="empty" id="no-video">
+            <b>NO SIGNAL</b>
+            <span id="no-video-why">Sample games ship tracking only.</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel state-panel">
+        <div class="ph"><span class="id">04</span><b>DETECTOR</b><span>STATE @ PLAYHEAD</span></div>
+        <div class="state-head">
+          <div><div class="k">TRUTH</div><div class="v" id="state-true">—</div></div>
+          <div><div class="k">PRED</div><div class="v" id="state-pred">—</div></div>
+          <div><div class="k">MATCH</div><div class="v" id="state-match">—</div></div>
+        </div>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>SIGNAL</th><th class="r">VALUE</th><th class="r">TRIGGER</th><th class="r">LEVEL</th></tr></thead>
+            <tbody id="evidence"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <div class="col">
+      <section class="panel req-panel">
+        <div class="ph"><span class="id">05</span><b>ROLE 1 CHECKLIST</b><span class="r sum" id="req-summary"></span></div>
+        <div class="scroll"><table class="reqs"><tbody id="reqs"></tbody></table></div>
+      </section>
+      <section class="panel err-panel">
+        <div class="ph"><span class="id">06</span><b>ERRORS</b>
+          <span class="r filters" id="filters">
+            <button data-k="0" aria-pressed="true">ALL</button><button data-k="1">MISS</button><button data-k="2">INV</button><button data-k="3">EDGE</button>
+          </span>
+        </div>
+        <div class="scroll">
+          <table class="errs">
+            <thead><tr><th>T+</th><th>TYPE</th><th class="r">DUR</th><th class="r">FRAME</th></tr></thead>
+            <tbody id="misses"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="status" id="status-bar">
+    <span><i class="ok"></i><b>READY</b></span>
+    <span>SRC <b id="sb-src">—</b></span>
+    <span><b id="sb-fps">25</b> FPS</span>
+    <span>FRAME <b id="sb-frame">—</b></span>
+    <span>TRACKED <b id="sb-tracked">—</b></span>
+    <span>CURSOR <b id="sb-cursor">—</b></span>
+    <span class="grow">RENDER <b id="sb-render">—</b> · <span id="sb-mode">—</span></span>
+  </footer>
+</div>
+<div id="loading">LOADING…</div>
+<div class="scrim" id="scrim"></div>
+
+<script>
+(() => {
+  const NAN = -32768;
+  const MIN_DISAGREE_S = 1;
+  const ZOOM_S = 60;
+  const LABEL_W = 64;
+  const BOX_M = 2.2;            // detection box side on the pitch view, metres
+  const KIND = { 1: ["miss", "MISSED"], 2: ["extra", "INVENTED"], 3: ["edge", "EDGE"] };
+  const STATUS = { met: "PASS", partial: "PART", todo: "TODO", na: "N/A" };
+
+  const $ = (id) => document.getElementById(id);
+  const els = {
+    game: $("game"), scenario: $("scenario"), loading: $("loading"), app: $("app"), kpis: $("kpis"),
+    pitch: $("pitch"), pitchPanel: $("pitch-panel"), timeline: $("timeline"), zoom: $("zoom"), tip: $("tip"),
+    play: $("play"), clock: $("clock"), frameNo: $("frame-no"), hiddenBall: $("hidden-ball"), labels: $("labels"),
+    video: $("video"), overlay: $("overlay"), camera: $("camera"), noVideo: $("no-video"), noVideoWhy: $("no-video-why"),
+    camState: $("cam-state"), enlarge: $("enlarge"), scrim: $("scrim"),
+    stateTrue: $("state-true"), statePred: $("state-pred"), stateMatch: $("state-match"), evidence: $("evidence"),
+    reqs: $("reqs"), reqSummary: $("req-summary"), misses: $("misses"), filters: $("filters"), theme: $("theme"),
+    sbSrc: $("sb-src"), sbFps: $("sb-fps"), sbFrame: $("sb-frame"), sbTracked: $("sb-tracked"),
+    sbCursor: $("sb-cursor"), sbRender: $("sb-render"), sbMode: $("sb-mode"),
+  };
+
+  let meta = null, data = null, width = 0, truth = null, pred = null, disagreements = [], hom = null;
+  let t = 0, playing = false, speed = 4, last = 0, filter = 0, hasVideo = false, pausing = false;
+  let cursor = null;          // pitch metres under the mouse, or null
+  let slotIds = [];           // "H01".."A11": per-team track number (a track slot, not a shirt number)
+  const colors = {};
+
+  // -- theme ------------------------------------------------------------------------------------
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } },
+  };
+  function readColors() {
+    const css = getComputedStyle(document.documentElement);
+    for (const k of ["pitch", "pitch-line", "pitch-grid", "home", "away", "ball", "signal", "dead", "live", "track",
+                     "miss", "extra", "edge", "ink", "ink-2", "muted", "faint", "line", "line-2", "panel", "mono", "bg"]) {
+      colors[k] = css.getPropertyValue("--" + k).trim();
+    }
+  }
+  const isDark = () => colors.bg.toLowerCase() === "#08090b";
+  els.theme.addEventListener("click", () => {
+    const next = isDark() ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    store.set("deadball-theme", next);
+    readColors(); drawAll();
+  });
+  matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => { readColors(); drawAll(); });
+
+  // -- helpers ----------------------------------------------------------------------------------
+  function fmt(frame, tenths) {
+    const total = Math.max(0, frame / meta.fps);
+    const m = Math.floor(total / 60), s = Math.floor(total % 60);
+    const out = String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+    return tenths ? out + "." + Math.floor((total * 10) % 10) : out;
+  }
+  const pad6 = (n) => String(Math.max(0, Math.floor(n))).padStart(6, "0");
+  const pct = (v) => (v === null || v === undefined) ? "—" : Math.round(v * 100) + "%";
+
+  function mask(list) {
+    const out = new Uint8Array(meta.n_frames);
+    for (const [a, b] of list) out.fill(1, a, b);
+    return out;
+  }
+  function runsOf(arr, value) {
+    const out = [];
+    let start = -1;
+    for (let i = 0; i <= arr.length; i++) {
+      const on = i < arr.length && arr[i] === value;
+      if (on && start < 0) start = i;
+      if (!on && start >= 0) { out.push([start, i]); start = -1; }
+    }
+    return out;
+  }
+
+  // 1 = missed stoppage, 2 = invented, 3 = found but its start or end is off
+  function buildDisagreements() {
+    disagreements = [];
+    if (!truth) return;
+    const graded = mask(meta.graded);
+    const kind = new Uint8Array(meta.n_frames);
+    for (let i = 0; i < meta.n_frames; i++) {
+      if (graded[i] && truth[i] !== pred[i]) kind[i] = truth[i] ? 1 : 2;
+    }
+    const minLen = MIN_DISAGREE_S * meta.fps;
+    for (const k of [1, 2]) {
+      const other = k === 1 ? pred : truth;
+      for (const [a, b] of runsOf(kind, k)) {
+        if (b - a < minLen) continue;
+        const edge = (a > 0 && other[a - 1]) || (b < meta.n_frames && other[b]);
+        disagreements.push({ a, b, k: edge ? 3 : k });
+      }
+    }
+    disagreements.sort((x, y) => x.a - y.a);
+  }
+
+  function sample(i, col) {
+    const v = data[i * width + col];
+    return v === NAN ? NaN : v / 10;
+  }
+  function point(frame, col) {
+    const f = Math.max(0, frame) / meta.step;
+    const i = Math.min(meta.n_steps - 1, Math.floor(f)), j = Math.min(meta.n_steps - 1, i + 1), w = f - i;
+    const x0 = sample(i, col), y0 = sample(i, col + 1), x1 = sample(j, col), y1 = sample(j, col + 1);
+    if (isNaN(x0)) return null;
+    if (isNaN(x1)) return [x0, y0];
+    return [x0 + (x1 - x0) * w, y0 + (y1 - y0) * w];
+  }
+  function evidenceAt(frame) {
+    const i = Math.min(meta.n_steps - 1, Math.round(frame / meta.step));
+    const e = {};
+    for (const k in meta.evidence) e[k] = meta.evidence[k][i];
+    return e;
+  }
+
+  // Everything tracked at the playhead: players with id, team, speed; the ball; who is nearest.
+  function scene() {
+    const players = [];
+    for (let k = 0; k < meta.n_slots; k++) {
+      const p = point(t, 4 + 2 * k);
+      if (!p) continue;
+      const q = point(t - meta.step, 4 + 2 * k);
+      const v = q ? Math.hypot(p[0] - q[0], p[1] - q[1]) * meta.fps / meta.step : null;
+      const team = meta.team[k];
+      players.push({ k, team, p, v: v !== null && v < 12 ? v : null, id: slotIds[k] });
+    }
+    const ball = point(t, 0), hidden = !ball ? point(t, 2) : null;
+    let nearest = null;
+    if (ball) {
+      for (const pl of players) {
+        const d = Math.hypot(pl.p[0] - ball[0], pl.p[1] - ball[1]);
+        if (!nearest || d < nearest.d) nearest = { pl, d };
+      }
+    }
+    return { players, ball, hidden, nearest };
+  }
+
+  function fit(canvas) {
+    const r = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    const w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return [ctx, r.width, r.height];
+  }
+  function text(ctx, s, x, y, o = {}) {
+    ctx.font = (o.weight || 500) + " " + (o.size || 9) + "px " + colors.mono;
+    ctx.fillStyle = o.color || colors.muted;
+    ctx.textAlign = o.align || "left";
+    ctx.textBaseline = o.baseline || "middle";
+    ctx.fillText(s, x, y);
+    ctx.textAlign = "left";
+  }
+  // A detection box with a filled tag, CV style. With o.placed (a list of tag rects already drawn),
+  // the tag tries above, below, then right-aligned spots, and falls back to o.short if all collide.
+  function tagBox(ctx, x, y, w, h, color, label, o = {}) {
+    ctx.lineWidth = o.lw || 1;
+    ctx.strokeStyle = color;
+    if (o.dash) ctx.setLineDash(o.dash);
+    ctx.strokeRect(Math.round(x) + 0.5, Math.round(y) + 0.5, Math.round(w), Math.round(h));
+    ctx.setLineDash([]);
+    if (!label) return;
+    const size = o.size || 9, th = size + 4;
+    ctx.font = "600 " + size + "px " + colors.mono;
+    const spots = (txt) => {
+      const tw = ctx.measureText(txt).width + 6;
+      return [[x, y - th], [x, y + h], [x + w - tw, y - th], [x + w - tw, y + h]].map(([sx, sy]) => [sx, sy, tw, th, txt]);
+    };
+    const free = ([sx, sy, sw, sh]) => sy >= (o.minY || 0) &&
+      !(o.placed || []).some(([px, py, pw, ph]) => sx < px + pw && px < sx + sw && sy < py + ph && py < sy + sh);
+    let spot = spots(label).find(free);
+    if (!spot && o.short) spot = spots(o.short).find(free) || spots(o.short)[0];
+    if (!spot) spot = spots(label)[0];
+    const [sx, sy, sw, sh, txt] = spot;
+    if (o.placed) o.placed.push([sx, sy, sw, sh]);
+    ctx.fillStyle = color;
+    ctx.fillRect(Math.round(sx), Math.round(sy), sw, sh);
+    ctx.fillStyle = o.ink || "#000";
+    ctx.textBaseline = "middle"; ctx.textAlign = "left";
+    ctx.fillText(txt, Math.round(sx) + 3, Math.round(sy) + sh / 2 + 0.5);
+  }
+  function hatch(ctx, x, y, w, h, color, gap) {
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+    ctx.strokeStyle = color; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let d = -h; d < w; d += gap) { ctx.moveTo(x + d, y + h); ctx.lineTo(x + d + h, y); }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // -- pitch ------------------------------------------------------------------------------------
+  let pitchMap = null;   // last X/Y transform, for the cursor readout
+  function drawPitch(sc) {
+    const t0 = performance.now();
+    const [ctx, W, H] = fit(els.pitch);
+    const [L, Wd] = meta.pitch, pad = 5;
+    const s = Math.min((W - 30) / (L + 2 * pad), (H - 22) / (Wd + 2 * pad));
+    const ox = W / 2 + 10, oy = H / 2 - 6;
+    const X = (x) => ox + x * s, Y = (y) => oy - y * s;
+    pitchMap = { X, Y, s, ox, oy, L, Wd };
+    const dead = !!pred[Math.floor(t)];
+    const fx = X(-L / 2 - pad), fy = Y(Wd / 2 + pad), fw = (L + 2 * pad) * s, fh = (Wd + 2 * pad) * s;
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = colors.pitch; ctx.fillRect(fx, fy, fw, fh);
+
+    // 5 m engineering grid with axis ticks
+    ctx.strokeStyle = colors["pitch-grid"]; ctx.lineWidth = 1; ctx.beginPath();
+    for (let x = -50; x <= 50; x += 5) { ctx.moveTo(Math.round(X(x)) + 0.5, fy); ctx.lineTo(Math.round(X(x)) + 0.5, fy + fh); }
+    for (let y = -35; y <= 35; y += 5) { ctx.moveTo(fx, Math.round(Y(y)) + 0.5); ctx.lineTo(fx + fw, Math.round(Y(y)) + 0.5); }
+    ctx.stroke();
+    for (let x = -50; x <= 50; x += 10) text(ctx, (x > 0 ? "+" : "") + x, X(x), fy + fh + 8, { align: "center", color: colors.faint, size: 8 });
+    for (let y = -30; y <= 30; y += 10) text(ctx, (y > 0 ? "+" : "") + y, fx - 4, Y(y), { align: "right", color: colors.faint, size: 8 });
+
+    ctx.strokeStyle = colors["pitch-line"]; ctx.fillStyle = colors["pitch-line"]; ctx.lineWidth = 1;
+    ctx.strokeRect(X(-L / 2), Y(Wd / 2), L * s, Wd * s);
+    ctx.beginPath(); ctx.moveTo(X(0), Y(Wd / 2)); ctx.lineTo(X(0), Y(-Wd / 2)); ctx.stroke();
+    ctx.beginPath(); ctx.arc(X(0), Y(0), 9.15 * s, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillRect(X(0) - 1, Y(0) - 1, 2, 2);
+    for (const side of [-1, 1]) {
+      const gx = side * L / 2;
+      ctx.strokeRect(Math.min(X(gx), X(gx - side * 16.5)), Y(20.16), 16.5 * s, 40.32 * s);
+      ctx.strokeRect(Math.min(X(gx), X(gx - side * 5.5)), Y(9.16), 5.5 * s, 18.32 * s);
+      ctx.strokeRect(Math.min(X(gx), X(gx + side * 1.5)), Y(3.66), 1.5 * s, 7.32 * s);
+      ctx.fillRect(X(gx - side * 11) - 1, Y(0) - 1, 2, 2);
+    }
+
+    if (dead) {
+      ctx.fillStyle = colors.dead; ctx.globalAlpha = 0.14; ctx.fillRect(fx, fy, fw, fh); ctx.globalAlpha = 1;
+      ctx.globalAlpha = 0.22; hatch(ctx, fx, fy, fw, fh, colors.dead, 10); ctx.globalAlpha = 1;
+    }
+
+    // ball trail
+    ctx.strokeStyle = colors.ball; ctx.globalAlpha = 0.55; ctx.lineWidth = 1; ctx.setLineDash([2, 2]); ctx.beginPath();
+    let on = false;
+    for (let f = Math.max(0, t - 2 * meta.fps); f <= t; f += meta.step) {
+      const p = point(f, 0);
+      if (!p) { on = false; continue; }
+      if (!on) { ctx.moveTo(X(p[0]), Y(p[1])); on = true; } else ctx.lineTo(X(p[0]), Y(p[1]));
+    }
+    ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+
+    // detections: the ball and the player nearest it are placed first so their tags win the space
+    const box = Math.max(8, BOX_M * s), labels = els.labels.checked, placed = [];
+    const bb = Math.max(7, 1.4 * s);
+    if (sc.ball) {
+      const bx = X(sc.ball[0]), by = Y(sc.ball[1]);
+      ctx.fillStyle = colors.ball; ctx.beginPath(); ctx.arc(bx, by, Math.max(2.5, 0.45 * s), 0, Math.PI * 2); ctx.fill();
+      tagBox(ctx, bx - bb / 2, by - bb / 2, bb, bb, colors.ball, labels ? "BALL" : "", { size: 8, minY: fy, placed });
+    } else if (sc.hidden && els.hiddenBall.checked) {
+      const bx = X(sc.hidden[0]), by = Y(sc.hidden[1]);
+      tagBox(ctx, bx - bb / 2, by - bb / 2, bb, bb, colors.ball, labels ? "BALL · LOST" : "", { dash: [2, 2], size: 8, minY: fy, placed, short: "BALL" });
+    }
+    const order = sc.players.slice().sort((a, b) => (sc.nearest && b === sc.nearest.pl) - (sc.nearest && a === sc.nearest.pl));
+    for (const pl of order) {
+      const focus = sc.nearest && sc.nearest.pl === pl;
+      const c = focus ? colors.ball : pl.team === 0 ? colors.home : colors.away;
+      const cx = X(pl.p[0]), cy = Y(pl.p[1]);
+      ctx.fillStyle = c; ctx.fillRect(Math.round(cx) - 1.5, Math.round(cy) - 1.5, 3, 3);
+      const label = !labels ? "" : focus
+        ? pl.id + " · NEAREST " + sc.nearest.d.toFixed(1) + "m"
+        : pl.id + (pl.v !== null ? " " + pl.v.toFixed(1) : "");
+      tagBox(ctx, cx - box / 2, cy - box / 2, box, box, c, label,
+             { lw: focus ? 2 : 1, ink: pl.team === 1 && !focus ? colors.bg : "#000", size: 8, minY: fy, placed, short: pl.id });
+    }
+
+    // cursor crosshair
+    if (cursor) {
+      ctx.strokeStyle = colors.muted; ctx.globalAlpha = 0.6; ctx.setLineDash([3, 3]); ctx.beginPath();
+      ctx.moveTo(X(cursor[0]), fy); ctx.lineTo(X(cursor[0]), fy + fh);
+      ctx.moveTo(fx, Y(cursor[1])); ctx.lineTo(fx + fw, Y(cursor[1]));
+      ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+    }
+
+    // state block
+    if (dead) {
+      ctx.strokeStyle = colors.dead; ctx.lineWidth = 2; ctx.strokeRect(fx + 1, fy + 1, fw - 2, fh - 2);
+      let start = Math.floor(t);
+      while (start > 0 && pred[start - 1]) start--;
+      const label = "■ DEAD BALL   T+" + ((t - start) / meta.fps).toFixed(1) + "s";
+      ctx.font = "700 13px " + colors.mono;
+      const bw = ctx.measureText(label).width + 20, bh = 24, bx = fx + fw / 2 - bw / 2, by = fy + 10;
+      ctx.fillStyle = colors.dead; ctx.fillRect(bx, by, bw, bh);
+      ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(label, bx + bw / 2, by + bh / 2 + 1); ctx.textAlign = "left";
+      if (truth) {
+        const ok = !!truth[Math.floor(t)];
+        const note = ok ? "TRUTH DEAD · AGREE" : "TRUTH LIVE · DISAGREE";
+        ctx.font = "700 9px " + colors.mono;
+        const nw = ctx.measureText(note).width + 12;
+        ctx.fillStyle = "#000"; ctx.fillRect(fx + fw / 2 - nw / 2, by + bh, nw, 15);
+        text(ctx, note, fx + fw / 2, by + bh + 8, { align: "center", weight: 700, color: ok ? "#fff" : colors.signal });
+      }
+    } else {
+      ctx.fillStyle = colors.live; ctx.fillRect(fx + 8, fy + 8, 6, 6);
+      text(ctx, "LIVE", fx + 19, fy + 11.5, { color: colors.live, weight: 700, size: 10 });
+    }
+    text(ctx, "F " + pad6(t), fx + fw - 8, fy + 11.5, { align: "right", color: colors.muted, weight: 600, size: 9 });
+    els.pitchPanel.classList.toggle("dead", dead);
+    els.sbRender.textContent = (performance.now() - t0).toFixed(1) + " ms";
+  }
+
+  // -- camera overlay (BAR-ATH: project tracking into the video with the homography) -----------
+  function drawOverlay(sc) {
+    if (!hasVideo || !hom) return;
+    const [ctx, W, H] = fit(els.overlay);
+    ctx.clearRect(0, 0, W, H);
+    const f = Math.min(meta.n_frames - 1, Math.round(t));
+    const m = hom.subarray(f * 9, f * 9 + 9);
+    if (isNaN(m[0])) return;
+    const [vw, vh] = meta.video_size || [els.video.videoWidth || 1920, els.video.videoHeight || 1080];
+    const k = Math.min(W / vw, H / vh), offX = (W - vw * k) / 2, offY = (H - vh * k) / 2;
+    const [L, Wd] = meta.pitch, camPlaced = [];
+    const proj = (x, y) => {     // metres (centred, y up) -> normalised pitch -> video pixels -> overlay
+      const nx = x / L + 0.5, ny = 0.5 - y / Wd;
+      const d = m[6] * nx + m[7] * ny + m[8];
+      return [offX + k * (m[0] * nx + m[1] * ny + m[2]) / d, offY + k * (m[3] * nx + m[4] * ny + m[5]) / d];
+    };
+    for (const pl of sc.players) {
+      const foot = proj(pl.p[0], pl.p[1]), side = proj(pl.p[0] + 1, pl.p[1]);
+      const mpx = Math.max(2, Math.hypot(side[0] - foot[0], side[1] - foot[1]));  // pixels per metre here
+      const bw = Math.max(6, 0.9 * mpx), bh = Math.max(12, 2.1 * mpx);
+      const focus = sc.nearest && sc.nearest.pl === pl;
+      const c = focus ? colors.ball : pl.team === 0 ? colors.home : "#e9ecef";
+      tagBox(ctx, foot[0] - bw / 2, foot[1] - bh, bw, bh, c, els.labels.checked ? pl.id : "",
+             { size: 7, lw: focus ? 2 : 1, placed: camPlaced, ink: pl.team === 1 && !focus ? "#000" : "#000" });
+    }
+    if (sc.ball) {
+      const b = proj(sc.ball[0], sc.ball[1]);
+      tagBox(ctx, b[0] - 4, b[1] - 4, 8, 8, colors.ball, els.labels.checked ? "BALL" : "", { size: 7 });
+    }
+    if (pred[f]) { ctx.strokeStyle = colors.dead; ctx.lineWidth = 3; ctx.strokeRect(1.5, 1.5, W - 3, H - 3); }
+  }
+
+  // -- timelines --------------------------------------------------------------------------------
+  function drawRuns(ctx, list, x0, x1, f0, f1, y, h, color) {
+    ctx.fillStyle = color;
+    const span = f1 - f0;
+    for (const [a, b] of list) {
+      if (b < f0 || a > f1) continue;
+      const xa = x0 + (Math.max(a, f0) - f0) / span * (x1 - x0);
+      const xb = x0 + (Math.min(b, f1) - f0) / span * (x1 - x0);
+      ctx.fillRect(xa, y, Math.max(1, xb - xa), h);
+    }
+  }
+  function drawTimeline() {
+    const [ctx, W, H] = fit(els.timeline);
+    ctx.clearRect(0, 0, W, H);
+    const rows = truth ? [["TRUTH", 0], ["PRED", 1], ["ERROR", 2]] : [["PRED", 1]];
+    const axis = 12, gap = 3, rowH = Math.floor((H - axis - gap * (rows.length - 1)) / rows.length);
+    rows.forEach(([label, kind], r) => {
+      const y = r * (rowH + gap);
+      ctx.fillStyle = colors.track; ctx.fillRect(LABEL_W, y, W - LABEL_W, rowH);
+      text(ctx, label, 0, y + rowH / 2, { color: colors.muted });
+      if (kind === 0) drawRuns(ctx, meta.true_dead, LABEL_W, W, 0, meta.n_frames, y, rowH, colors.dead);
+      if (kind === 1) drawRuns(ctx, meta.pred_dead, LABEL_W, W, 0, meta.n_frames, y, rowH, colors.dead);
+      if (kind === 2) for (const k of [3, 2, 1]) {
+        drawRuns(ctx, disagreements.filter(d => d.k === k).map(d => [d.a, d.b]), LABEL_W, W, 0, meta.n_frames, y, rowH, colors[KIND[k][0]]);
+      }
+    });
+    // minute axis
+    const ay = H - axis + 2, perMin = meta.fps * 60, every = meta.n_frames > 90 * perMin ? 15 : 10;
+    ctx.fillStyle = colors.faint;
+    for (let mnt = 0; mnt * perMin <= meta.n_frames; mnt += every) {
+      const x = LABEL_W + mnt * perMin / meta.n_frames * (W - LABEL_W);
+      ctx.fillRect(Math.round(x), ay - 2, 1, 3);
+      text(ctx, mnt + "'", x + 2, ay + 4, { color: colors.faint, size: 8 });
+    }
+    const x = LABEL_W + t / meta.n_frames * (W - LABEL_W);
+    ctx.fillStyle = colors.signal; ctx.fillRect(Math.round(x), 0, 1, H - axis);
+    ctx.beginPath(); ctx.moveTo(x - 4, 0); ctx.lineTo(x + 4, 0); ctx.lineTo(x, 5); ctx.fill();
+  }
+  function drawZoom() {
+    const [ctx, W, H] = fit(els.zoom);
+    ctx.clearRect(0, 0, W, H);
+    const f0 = t - ZOOM_S * meta.fps, f1 = t + ZOOM_S * meta.fps, band = 6;
+    if (truth) { drawRuns(ctx, meta.true_dead, LABEL_W, W, f0, f1, 0, band, colors.dead); text(ctx, "TRUTH", 0, band / 2); }
+    drawRuns(ctx, meta.pred_dead, LABEL_W, W, f0, f1, band + 2, band, colors.dead);
+    text(ctx, "PRED", 0, band + 2 + band / 2);
+
+    const top = 2 * band + 6, bottom = H - 11, max = 4;
+    const yOf = (v) => bottom - Math.min(v, max) / max * (bottom - top);
+    ctx.fillStyle = colors.track; ctx.fillRect(LABEL_W, top, W - LABEL_W, bottom - top);
+    ctx.strokeStyle = colors.line; ctx.lineWidth = 1; ctx.beginPath();
+    for (let sec = -ZOOM_S; sec <= ZOOM_S; sec += 10) {
+      const x = Math.round(LABEL_W + (sec + ZOOM_S) / (2 * ZOOM_S) * (W - LABEL_W)) + 0.5;
+      ctx.moveTo(x, top); ctx.lineTo(x, bottom);
+    }
+    ctx.stroke();
+    for (const [name, value] of [["ENTER", meta.params.enter], ["EXIT", meta.params.exit]]) {
+      ctx.strokeStyle = colors.muted; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(LABEL_W, Math.round(yOf(value)) + 0.5); ctx.lineTo(W, Math.round(yOf(value)) + 0.5); ctx.stroke(); ctx.setLineDash([]);
+      text(ctx, name + " " + value.toFixed(1), W - 3, yOf(value) + (name === "ENTER" ? -6 : 6), { align: "right", size: 8 });
+    }
+    text(ctx, "SCORE", 0, top + 5);
+    const score = meta.evidence.score;
+    const i0 = Math.max(0, Math.floor(f0 / meta.step)), i1 = Math.min(meta.n_steps - 1, Math.ceil(f1 / meta.step));
+    ctx.strokeStyle = colors["ink-2"]; ctx.lineWidth = 1; ctx.beginPath();
+    let started = false;
+    for (let i = i0; i <= i1; i++) {
+      const v = score[i];
+      if (v === null) continue;
+      const x = LABEL_W + (i * meta.step - f0) / (f1 - f0) * (W - LABEL_W);
+      if (!started) { ctx.moveTo(x, yOf(v)); started = true; } else ctx.lineTo(x, yOf(v));
+    }
+    ctx.stroke();
+    const x = Math.round(LABEL_W + (W - LABEL_W) / 2) + 0.5;
+    ctx.strokeStyle = colors.signal; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, bottom); ctx.stroke();
+    text(ctx, "-" + ZOOM_S + "s", LABEL_W, H - 3, { baseline: "alphabetic", size: 8 });
+    text(ctx, "T0", x, H - 3, { baseline: "alphabetic", align: "center", color: colors.signal, weight: 700, size: 8 });
+    text(ctx, "+" + ZOOM_S + "s", W, H - 3, { baseline: "alphabetic", align: "right", size: 8 });
+  }
+
+  // -- panels -----------------------------------------------------------------------------------
+  function renderKpis() {
+    const sc = meta.scores, c = (k) => disagreements.filter(d => d.k === k).length;
+    const timing = (meta.requirements || []).find(r => r.id === "timing");
+    const edge = timing && timing.detail.match(/start ([\d.]+) s · end ([\d.]+) s/);
+    const tiles = sc ? [
+      ["STOPPAGE_F1", sc.stoppage_f1.toFixed(3), true],
+      ["DEAD_F1", sc.dead_f1.toFixed(3)],
+      ["STOPS T/P", `${sc.n_true}<small>/</small>${sc.n_pred}`],
+      ["EDGE_ERR S/E", edge ? `${edge[1]}<small>s</small> ${edge[2]}<small>s</small>` : "—"],
+      ["MISSED", `${c(1)}`],
+      ["INVENTED", `${c(2)}<small> +${c(3)}e</small>`],
+    ] : [
+      ["STOPS_PRED", meta.pred_dead.length, true],
+      ["DEAD_SHARE", pct(pred.reduce((a, b) => a + b, 0) / meta.n_frames)],
+      ["TRUTH", "5<small>min</small>"],
+      ["FRAMES", meta.n_frames.toLocaleString()],
+    ];
+    els.kpis.innerHTML = tiles.map(([k, v, a]) =>
+      `<div class="ro${a ? " hi" : ""}"><div class="k">${k}</div><div class="v num">${v}</div></div>`).join("");
+  }
+
+  function renderRequirements() {
+    const list = meta.requirements || [];
+    const count = (s) => list.filter(r => r.status === s).length;
+    els.reqSummary.innerHTML = ["met", "partial", "todo", "na"].filter(s => count(s))
+      .map(s => `<span class="st ${s}" style="width:auto;padding:0 4px">${count(s)} ${STATUS[s]}</span>`).join("");
+    els.reqs.innerHTML = list.map(r => {
+      const bar = typeof r.value === "number" && r.id !== "timing"
+        ? `<div class="bar"><i style="width:${Math.min(100, r.value * 100)}%;background:var(--${r.status === "met" ? "pass" : r.status === "partial" ? "part" : r.status})"></i></div>` : "";
+      return `<tr title="${r.what}"><td style="width:52px"><span class="st ${r.status}">${STATUS[r.status]}</span></td>` +
+        `<td class="t">${r.title}<span class="d">${r.detail}</span>${bar}</td></tr>`;
+    }).join("");
+  }
+
+  function renderMisses() {
+    if (!truth) {
+      els.misses.innerHTML = '<tr><td colspan="4" class="dim">NO TRUTH FOR THIS SOURCE</td></tr>';
+      return;
+    }
+    const c = (k) => disagreements.filter(d => d.k === k).length;
+    els.filters.querySelectorAll("button").forEach(b => {
+      const k = Number(b.dataset.k);
+      b.textContent = ["ALL", "MISS", "INV", "EDGE"][k] + " " + (k ? c(k) : disagreements.length);
+    });
+    els.misses.innerHTML = disagreements.map((d, i) => (filter && d.k !== filter) ? "" :
+      `<tr data-i="${i}"><td class="num">${fmt(d.a)}</td>` +
+      `<td><span class="sw" style="background:var(--${KIND[d.k][0]})"></span>${KIND[d.k][1]}</td>` +
+      `<td class="r num">${((d.b - d.a) / meta.fps).toFixed(1)}s</td><td class="r num dim">${pad6(d.a)}</td></tr>`).join("");
+  }
+
+  function drawState(sc) {
+    const e = evidenceAt(t), p = meta.params, f = Math.floor(t);
+    const rows = [
+      ["score", e.score === null ? "—" : e.score.toFixed(2), "≥ " + p.enter.toFixed(1), e.score >= p.enter, (e.score || 0) / 4],
+      ["ball_missing", e.ball_gap_s ? e.ball_gap_s.toFixed(1) + "s" : "seen", "≥ " + p.long_gap_s + "s", e.ball_gap_s >= p.long_gap_s, (e.ball_gap_s || 0) / (2 * p.long_gap_s)],
+      ["ball_still", e.ball_still_s ? e.ball_still_s.toFixed(1) + "s" : "—", "≥ " + p.ball_still_s + "s", e.ball_still_s >= p.ball_still_s, (e.ball_still_s || 0) / (3 * p.ball_still_s)],
+      ["ball_out", e.ball_out_m === null ? "—" : e.ball_out_m > 0 ? "+" + e.ball_out_m.toFixed(1) + "m" : "in", "> 0m", e.ball_out_m > 0, e.ball_out_m > 0 ? 1 : 0],
+      ["player_speed", e.player_speed === null ? "—" : e.player_speed.toFixed(1) + "m/s", "< " + p.slow_speed + "m/s", e.player_speed !== null && e.player_speed < p.slow_speed, Math.min(1, (e.player_speed || 0) / 6)],
+      ["walking", pct(e.walking_share), "> " + Math.round(p.walking_share * 100) + "%", e.walking_share > p.walking_share, e.walking_share || 0],
+      ["kickoff_shape", e.kickoff_shape ? "yes" : "no", "yes", !!e.kickoff_shape, e.kickoff_shape ? 1 : 0],
+      ["nearest_to_ball", sc.nearest ? sc.nearest.pl.id + " " + sc.nearest.d.toFixed(1) + "m" : "—", "info", false, sc.nearest ? Math.max(0, 1 - sc.nearest.d / 10) : 0],
+      ["tracked", e.n_players === null ? "—" : e.n_players, "< 10 → dead", false, (e.n_players || 0) / 22],
+    ];
+    els.evidence.innerHTML = rows.map(([k, v, trig, on, m]) =>
+      `<tr class="${on ? "on" : ""}"><td>${k}</td><td class="r num">${v}</td><td class="r dim">${trig}</td>` +
+      `<td class="r"><span class="meter"><i style="width:${Math.max(0, Math.min(1, m)) * 100}%"></i></span></td></tr>`).join("");
+
+    const tv = truth ? !!truth[f] : null, pv = !!pred[f];
+    const set = (el, txt, cls) => { el.textContent = txt; el.className = "v " + cls; };
+    set(els.stateTrue, tv === null ? "N/A" : tv ? "DEAD" : "LIVE", tv === null ? "" : tv ? "dead" : "live");
+    set(els.statePred, pv ? "DEAD" : "LIVE", pv ? "dead" : "live");
+    set(els.stateMatch, tv === null ? "—" : tv === pv ? "OK" : "MISMATCH", tv === null ? "" : tv === pv ? "live" : "warn");
+
+    els.clock.textContent = fmt(t, true);
+    els.frameNo.textContent = pad6(f);
+    els.sbFrame.textContent = pad6(f) + " / " + pad6(meta.n_frames - 1);
+    els.sbTracked.textContent = sc.players.length + (sc.ball ? " + BALL" : " · BALL LOST");
+    els.sbCursor.textContent = cursor ? `X ${cursor[0] >= 0 ? "+" : ""}${cursor[0].toFixed(1)} Y ${cursor[1] >= 0 ? "+" : ""}${cursor[1].toFixed(1)} m` : "—";
+
+    const current = disagreements.findIndex(d => t >= d.a - 2 * meta.fps && t < d.b);
+    els.misses.querySelectorAll("tr[data-i]").forEach(r => r.classList.toggle("current", Number(r.dataset.i) === current));
+  }
+
+  function drawAll() {
+    if (!meta) return;
+    const sc = scene();
+    drawPitch(sc); drawOverlay(sc); drawTimeline(); drawZoom(); drawState(sc);
+  }
+
+  // -- playback ---------------------------------------------------------------------------------
+  // The tactical video is frame-for-frame the submission index, so frame = currentTime * fps.
+  // With footage the video is the only clock while playing; it is only repositioned on a seek.
+  function seek(frame) {
+    t = Math.max(0, Math.min(meta.n_frames - 1, frame));
+    if (hasVideo) els.video.currentTime = t / meta.fps;
+    drawAll();
+  }
+  function setPlaying(on) {
+    playing = on;
+    els.play.textContent = on ? "❚❚ PAUSE" : "▶ PLAY";
+    if (hasVideo) {
+      els.video.playbackRate = Math.min(speed, 16);
+      if (on) els.video.play().catch(() => setPlaying(false));
+      else {
+        pausing = true; els.video.pause(); pausing = false;
+        t = Math.round(els.video.currentTime * meta.fps);   // stop on the frame the picture shows
+        drawAll();
+      }
+    }
+    if (on) { last = performance.now(); requestAnimationFrame(tick); }
+  }
+  function tick(now) {
+    if (!playing) return;
+    if (hasVideo) {
+      if (!els.video.paused && els.video.readyState >= 2) t = els.video.currentTime * meta.fps;
+    } else {
+      t += (now - last) / 1000 * meta.fps * speed;
+    }
+    last = now;
+    if (t >= meta.n_frames - 1) { t = meta.n_frames - 1; setPlaying(false); }
+    drawAll();
+    if (playing) requestAnimationFrame(tick);
+  }
+  els.video.addEventListener("ended", () => setPlaying(false));
+  // If the browser pauses the video itself (power saving, a stall), stop with it rather than
+  // letting the pitch and the picture disagree.
+  els.video.addEventListener("pause", () => {
+    if (playing && !pausing) {
+      playing = false; els.play.textContent = "▶ PLAY";
+      t = Math.round(els.video.currentTime * meta.fps); drawAll();
+    }
+  });
+  function jump(dir) {
+    const list = disagreements.filter(d => !filter || d.k === filter);
+    if (!list.length) return;
+    const lead = 2 * meta.fps;
+    const next = dir > 0 ? list.find(d => d.a - lead > t + 1) : [...list].reverse().find(d => d.a - lead < t - 1);
+    if (next) seek(next.a - lead);
+  }
+
+  els.play.addEventListener("click", () => setPlaying(!playing));
+  document.querySelectorAll("[data-speed]").forEach(b => b.addEventListener("click", () => {
+    speed = Number(b.dataset.speed);
+    document.querySelectorAll("[data-speed]").forEach(o => o.setAttribute("aria-pressed", String(o === b)));
+    if (hasVideo) els.video.playbackRate = Math.min(speed, 16);
+  }));
+  els.hiddenBall.addEventListener("change", drawAll);
+  els.labels.addEventListener("change", drawAll);
+  els.misses.addEventListener("click", (ev) => {
+    const r = ev.target.closest("tr[data-i]");
+    if (r) seek(disagreements[Number(r.dataset.i)].a - 2 * meta.fps);
+  });
+  els.filters.addEventListener("click", (ev) => {
+    const b = ev.target.closest("button[data-k]");
+    if (!b) return;
+    filter = Number(b.dataset.k);
+    els.filters.querySelectorAll("button").forEach(o => o.setAttribute("aria-pressed", String(o === b)));
+    renderMisses(); drawAll();
+  });
+  const toggleBig = (on) => { els.camera.classList.toggle("big", on); els.scrim.classList.toggle("on", on); requestAnimationFrame(drawAll); };
+  els.enlarge.addEventListener("click", () => toggleBig(!els.camera.classList.contains("big")));
+  els.scrim.addEventListener("click", () => toggleBig(false));
+
+  els.pitch.addEventListener("mousemove", (ev) => {
+    if (!pitchMap) return;
+    const r = els.pitch.getBoundingClientRect();
+    const x = (ev.clientX - r.left - pitchMap.ox) / pitchMap.s, y = (pitchMap.oy - (ev.clientY - r.top)) / pitchMap.s;
+    cursor = Math.abs(x) <= pitchMap.L / 2 + 5 && Math.abs(y) <= pitchMap.Wd / 2 + 5 ? [x, y] : null;
+    if (!playing) drawAll();
+  });
+  els.pitch.addEventListener("mouseleave", () => { cursor = null; if (!playing) drawAll(); });
+
+  function timelineFrame(ev) {
+    const r = els.timeline.getBoundingClientRect(), x = ev.clientX - r.left;
+    return x < LABEL_W ? null : (x - LABEL_W) / (r.width - LABEL_W) * meta.n_frames;
+  }
+  els.timeline.addEventListener("click", (ev) => { const f = timelineFrame(ev); if (f !== null) seek(f); });
+  els.timeline.addEventListener("mousemove", (ev) => {
+    const f = timelineFrame(ev);
+    if (f === null) { els.tip.style.display = "none"; return; }
+    const box = els.timeline.getBoundingClientRect(), parent = els.timeline.parentElement.getBoundingClientRect();
+    els.tip.style.display = "block";
+    els.tip.style.left = (ev.clientX - parent.left) + "px";
+    els.tip.style.top = (box.top - parent.top - 14) + "px";
+    els.tip.textContent = fmt(f) + "  F" + pad6(f);
+  });
+  els.timeline.addEventListener("mouseleave", () => { els.tip.style.display = "none"; });
+
+  document.addEventListener("keydown", (ev) => {
+    if (!meta || (ev.target.closest && ev.target.closest("select, input"))) return;
+    if (ev.key === " ") { ev.preventDefault(); setPlaying(!playing); }
+    else if (ev.key === "ArrowRight") seek(t + 5 * meta.fps);
+    else if (ev.key === "ArrowLeft") seek(t - 5 * meta.fps);
+    else if (ev.key === ".") seek(Math.floor(t) + 1);
+    else if (ev.key === ",") seek(Math.floor(t) - 1);
+    else if (ev.key === "n") jump(1);
+    else if (ev.key === "p") jump(-1);
+    else if (ev.key === "Escape") toggleBig(false);
+  });
+  window.addEventListener("resize", drawAll);
+
+  // -- loading ----------------------------------------------------------------------------------
+  async function load(name) {
+    setPlaying(false);
+    els.loading.hidden = false; els.loading.textContent = "LOADING " + name.toUpperCase() + " …";
+    const [m, buf] = await Promise.all([
+      fetch("data/" + name + ".json").then(r => r.json()),
+      fetch("data/" + name + ".bin").then(r => r.arrayBuffer()),
+    ]);
+    meta = m; data = new Int16Array(buf); width = 4 + 2 * meta.n_slots;
+    const seen = [0, 0];
+    slotIds = meta.team.map(team => (team === 0 ? "H" : "A") + String(++seen[team]).padStart(2, "0"));
+    hom = meta.homography ? new Float32Array(await fetch(meta.homography).then(r => r.arrayBuffer())) : null;
+    truth = meta.true_dead ? mask(meta.true_dead) : null;
+    pred = mask(meta.pred_dead);
+    buildDisagreements();
+
+    hasVideo = !!meta.video;
+    els.noVideo.hidden = hasVideo;
+    els.video.hidden = !hasVideo;
+    els.overlay.hidden = !(hasVideo && hom);
+    els.camState.textContent = hasVideo ? (hom ? "LIVE · DETECTIONS" : "LIVE") : "NO SIGNAL";
+    // Volume 0 rather than muted: Chrome pauses muted video that scrolls off screen, and playback
+    // only ever starts from a click or key press, so an unmuted silent video is allowed to play.
+    if (hasVideo) { els.video.volume = 0; els.video.src = meta.video; els.video.load(); }
+    else {
+      els.video.removeAttribute("src");
+      els.noVideoWhy.textContent = name === "BAR-ATH"
+        ? "Put BAR-ATH_tactical.mp4 in the challenge data/tactical folder and re-export."
+        : "Sample games ship tracking only, so there is no camera to show.";
+    }
+
+    els.scenario.textContent = !meta.true_dead ? "REAL TRACKING"
+      : (meta.dropout ? "SIM DROPOUT" : "CLEAN BALL") +
+        (meta.dead_visible ? " · BALL IN " + Math.round(meta.dead_visible * 100) + "% OF STOPS" : "");
+    els.sbSrc.textContent = name;
+    els.sbFps.textContent = meta.fps;
+    els.sbMode.textContent = hom ? "HOMOGRAPHY ON" : "2D ONLY";
+
+    els.loading.hidden = true; els.app.hidden = false;
+    renderKpis(); renderRequirements(); renderMisses();
+    seek(meta.graded.length ? meta.graded[0][0] : 0);
+  }
+
+  async function init() {
+    const saved = store.get("deadball-theme");
+    if (saved) document.documentElement.dataset.theme = saved;
+    readColors();
+    try {
+      const names = await fetch("data/index.json").then(r => r.json());
+      els.game.innerHTML = names.map(n => `<option>${n}</option>`).join("");
+      const wanted = new URLSearchParams(location.search).get("game");
+      const first = names.includes(wanted) ? wanted : names[0];
+      els.game.value = first;
+      els.game.addEventListener("change", () => load(els.game.value));
+      await load(first);
+    } catch (err) {
+      els.loading.textContent = "NO EXPORTED SOURCES · RUN  .venv/bin/python run.py view";
+      console.error(err);
+    }
+  }
+  init();
+})();
+</script>
+</body>
+</html>
