@@ -6,14 +6,19 @@ a particular game -- the challenge rules forbid constants tied to frames of the 
 
 import numpy as np
 
-# Tuned on Metrica Sample Games 1-3 only, never on the challenge match. Two re-tunes on 2026-11-12,
-# after the organisers' rules clarification, each with a selection rule fixed before running:
+# Tuned on external data only (Metrica Sample Games 1-3, later also DFL open data), never on the
+# challenge match. Re-tunes after the organisers' rules clarification, each with a selection rule
+# fixed before running:
 #   1. deadball/tune.py: highest mean stoppage F1 over 10 stress scenarios (changed enter 1.5 -> 2.0)
 #   2. rondo/tune_dead_ball.py: highest mean spellF1 of the whole pipeline (this detector, then the
 #      v3 possession model) over 60 degraded sample runs, one setting at a time, two passes. It
 #      changed w_slow 0.5 -> 1.0, w_ball_still 1.0 -> 0.5, exit 1.0 -> 1.5, min_dead_s 3 -> 5 and the
 #      edge snapping (start_fwd 2 -> 1, end_back 3 -> 4, end_fwd 1 -> 0.5): mean 0.576 -> 0.593.
-# spellF1 is what we are ranked on, so (2) has the last word; re-running tune.py alone would undo it.
+#      Re-run with the v4 model: nothing changed.
+#   3. 2026-11-14, the same tuner with the v5 model and --dfl J03WMX J03WN1 J03WOH J03WOY (score =
+#      half Metrica, half DFL): changed w_ball_still 0.5 -> 1.5, 0.606 -> 0.611. Kept because the
+#      three DFL matches it never saw (J03WPY, J03WQQ, J03WR9) also improved, 0.568 -> 0.581.
+# spellF1 is what we are ranked on, so (2)-(3) have the last word; re-running tune.py alone would undo it.
 PARAMS = {
     # evidence weights
     "w_out": 2.0,            # last seen ball beyond the lines, now missing
@@ -22,7 +27,7 @@ PARAMS = {
     "w_slow": 1.0,           # players barely moving
     "w_walking": 1.0,        # nearly everyone walking
     "w_kickoff": 2.0,        # kick-off shape
-    "w_ball_still": 0.5,     # ball seen lying still for a while (placed for a set piece)
+    "w_ball_still": 1.5,     # ball seen lying still for a while (placed for a set piece)
     "w_out_latch": 1.0,      # the ball went out and the restart has not been struck yet: = exit, so it holds a stoppage alone
     # evidence thresholds
     "out_margin_m": 0.0,

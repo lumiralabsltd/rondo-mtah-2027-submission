@@ -26,8 +26,13 @@ Our match's tracking is automatic, so each sample game is made worse first, in e
     lost in bursts / both
 That is 3 games x 4 x 4 = 48 runs.
 
-What is learned, all from those runs: the scene table and the logistic weights (counted and
-fitted, nothing to choose), and SWITCH_COST. spellF1 counts every possession once however long
+What is learned, all from those runs: the scene table and the network's weights (counted and
+fitted; the network's size and training steps were fixed before running, not tuned), and
+SWITCH_COST. The network replaced v4's logistic regression, and team-shape features were added,
+by the rules in Rondo.md (best on 3 sample games + 2 DFL matches by more than 0.005, then confirmed
+on 5 DFL matches never used for any choice). Five copies of the network, from random starts 0-4,
+are averaged (the number fixed before running; adopted because it raised the held-out sample mean
+by more than TIE and did not lower DFL). spellF1 counts every possession once however long
 it is, so each training frame is weighted 1 / sqrt(length of its possession): a 1 s possession
 is no longer drowned out by a 30 s one (chosen on these games together with the controlled
 labels and the touch-sequence features, by the 5-game rule in Rondo.md). Rule for the switch cost, fixed before running:
@@ -59,6 +64,10 @@ TIE = 0.002
 COSTS = (1, 2, 3, 5, 7, 10, 15, 20)
 STRIDE = 5          # train on every 5th frame (neighbouring frames say the same thing)
 L2 = 1.0
+KIND = "mlp"        # the per-frame model; v4 was "logistic"
+MLP_STRIDE = 10     # the network trains on every 10th frame
+HIDDEN, ITERATIONS, LEARNING_RATE, MLP_L2 = 24, 400, 0.01, 1e-4   # fixed, not tuned
+SEEDS = (0, 1, 2, 3, 4)   # five networks from different random starts, averaged (fixed, not tuned)
 ON_BALL = {"PASS", "CARRY", "SHOT", "SET PIECE", "RECOVERY", "BALL LOST"}
 UNCONTROLLED = {"PASS", "BALL LOST"}   # a lone one of these by the other team is not a change
 DEAD_BALL = [(rate, visible) for rate in evaluate.DROPOUT_RATES for visible in (0.0, 1.0)]
@@ -198,18 +207,34 @@ def possession_length(truth):
     return out
 
 
-def fit_weights(runs, scene_llr):
-    """Logistic regression, no intercept, L2, by Newton's method (deterministic). Each frame is
-    weighted 1 / sqrt(length of its possession), so short possessions count."""
+def training_rows(runs, scene_llr, stride):
+    """Features, labels (1 = Barça) and weights for every stride-th labelled live frame. Each frame
+    is weighted 1 / sqrt(length of its possession), so short possessions count."""
     xs, ys, ws = [], [], []
     for run in runs:
         truth, alive = run["truth"], run["alive"]
-        rows = np.flatnonzero(alive & ((truth == pm.H) | (truth == pm.A)))[::STRIDE]
+        rows = np.flatnonzero(alive & ((truth == pm.H) | (truth == pm.A)))[::stride]
         xs.append(possession.features(run["geo"], alive, scene_llr)[rows])
         ys.append((truth[rows] == pm.H).astype(np.float64))
         ws.append(1.0 / np.sqrt(possession_length(truth)[rows]))
     x, y, weight = np.concatenate(xs), np.concatenate(ys), np.concatenate(ws)
-    weight /= weight.mean()
+    return x, y, weight / weight.mean()
+
+
+def fit_model(runs, scene_llr):
+    """The per-frame model: a small antisymmetric neural network (KIND = "mlp"), or the v4 logistic."""
+    if KIND == "logistic":
+        x, y, weight = training_rows(runs, scene_llr, STRIDE)
+        return dict(kind="logistic", scene_llr=scene_llr, weights=fit_logistic(x, y, weight))
+    x, y, weight = training_rows(runs, scene_llr, MLP_STRIDE)
+    nets = [fit_mlp(x, y, weight, seed) for seed in SEEDS]
+    return dict(kind="mlp", scene_llr=scene_llr, W1=np.stack([n[0] for n in nets]),
+                b1=np.stack([n[1] for n in nets]), W2=np.stack([n[2] for n in nets]),
+                scale=nets[0][3])
+
+
+def fit_logistic(x, y, weight):
+    """Logistic regression, no intercept, L2, by Newton's method (deterministic)."""
     w = np.zeros(x.shape[1])
     for _ in range(50):
         p = 1.0 / (1.0 + np.exp(-(x @ w)))
@@ -222,16 +247,45 @@ def fit_weights(runs, scene_llr):
     return w
 
 
+def fit_mlp(x, y, weight, seed=0):
+    """logit = g(x) - g(-x), g one tanh layer; weighted log-loss by full-batch Adam from a fixed
+    seed, a fixed number of steps (deterministic). Hyperparameters fixed before running, not tuned."""
+    rng = np.random.RandomState(seed)
+    scale = np.sqrt(np.mean(x ** 2, axis=0)) + 1e-9      # no centring, so the model stays antisymmetric
+    xs = x / scale
+    params = [rng.normal(0, 1 / np.sqrt(x.shape[1]), (x.shape[1], HIDDEN)), np.zeros(HIDDEN),
+              rng.normal(0, 0.1, HIDDEN)]
+    first = [np.zeros_like(p) for p in params]
+    second = [np.zeros_like(p) for p in params]
+    n = len(y)
+    for step in range(1, ITERATIONS + 1):
+        W1, b1, W2 = params
+        h_pos = np.tanh(xs @ W1 + b1)
+        h_neg = np.tanh(-xs @ W1 + b1)
+        z = h_pos @ W2 - h_neg @ W2
+        g = weight * (1 / (1 + np.exp(-z)) - y) / n
+        grad_W2 = h_pos.T @ g - h_neg.T @ g + MLP_L2 * W2
+        d_pos = np.outer(g, W2) * (1 - h_pos ** 2)
+        d_neg = -np.outer(g, W2) * (1 - h_neg ** 2)
+        grad_W1 = xs.T @ d_pos - xs.T @ d_neg + MLP_L2 * W1
+        grad_b1 = d_pos.sum(0) + d_neg.sum(0)
+        for j, grad in enumerate((grad_W1, grad_b1, grad_W2)):
+            first[j] = 0.9 * first[j] + 0.1 * grad
+            second[j] = 0.999 * second[j] + 0.001 * grad ** 2
+            params[j] = params[j] - LEARNING_RATE * (first[j] / (1 - 0.9 ** step)) / (
+                np.sqrt(second[j] / (1 - 0.999 ** step)) + 1e-8)
+    return params[0], params[1], params[2], scale
+
+
 def spell_f1(truth, alive, team):
     codes = pm.label_codes(np.where(alive, team, "D"))
     runs = pm.valid_runs(truth)
     return pm.spell_scores(truth, pm.fill_abstentions(codes, runs), runs)["mean_f1"]
 
 
-def score_runs(runs, scene_llr, weights, costs):
+def score_runs(runs, model, costs):
     """{cost: [spellF1 per run]}."""
     out = {c: [] for c in costs}
-    model = dict(scene_llr=scene_llr, weights=weights)
     for run in runs:
         alive, geo = run["alive"], run["geo"]
         score = possession.frame_scores(geo, alive, model)
@@ -247,8 +301,7 @@ def leave_one_game_out(runs):
     for game in sorted({r["game"] for r in runs}):
         train = [r for r in runs if r["game"] != game]
         test = [r for r in runs if r["game"] == game]
-        llr = fit_scenes(train)
-        scores = score_runs(test, llr, fit_weights(train, llr), COSTS)
+        scores = score_runs(test, fit_model(train, fit_scenes(train)), COSTS)
         for c in COSTS:
             out[c] += list(zip(test, scores[c]))
     return out
@@ -286,17 +339,18 @@ def main():
     if args.report:
         return 0
 
-    llr = fit_scenes(runs)
-    weights = fit_weights(runs, llr)
+    fitted = fit_model(runs, fit_scenes(runs))
     model = dict(
-        version=4,
+        version=5,
+        kind=fitted["kind"],
         trained_on="Metrica sample games 1-3 (github.com/metrica-sports/sample-data), "
                    "{} runs: dead-ball dropout x tracking noise; nothing from the challenge match".format(len(runs)),
         switch_cost=cost,
         held_out_spell_f1=round(means[cost], 4),
-        scene_llr=[float(v) for v in llr],
-        weights=[float(v) for v in weights],
     )
+    for key, value in fitted.items():
+        if key != "kind":
+            model[key] = np.asarray(value).tolist()
     with open(possession.MODEL_PATH, "w") as handle:
         json.dump(model, handle, indent=0)
         handle.write("\n")

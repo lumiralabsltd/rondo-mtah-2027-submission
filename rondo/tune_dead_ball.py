@@ -1,11 +1,12 @@
 """Re-tune Sukh's dead-ball settings for the score we are ranked on, on external data only.
 
-    .venv/bin/python -m rondo.tune_dead_ball          # about 20 minutes on 10 cores
+    .venv/bin/python -m rondo.tune_dead_ball                        # Metrica only, ~20 min
+    .venv/bin/python -m rondo.tune_dead_ball --dfl J03WMX J03WN1 ...  # plus these DFL matches, ~1.5 h for 4
 
 deadball/tune.py tunes the detector for its own stoppage F1. But what is ranked is spellF1 of the
 whole file, and a dead-ball mistake costs spellF1 in its own way: a false stoppage inside a
 possession splits it into two, a missed one merges two. So this scores every candidate setting by
-running the whole pipeline (dead ball, then the v3 possession model as it stands) on Metrica's
+running the whole pipeline (dead ball, then the possession model as it stands) on Metrica's
 open sample games and scoring the result with the challenge's spellF1, against possession from
 their event data (rondo/train_possession.py). Nothing here touches the challenge match.
 
@@ -13,10 +14,16 @@ Runs: 3 games x deadball/tune.py's 10 stress scenarios (ball visible in stoppage
 with and without balls past the line, x live-play dropout 20% / 40%) x tracking clean / noisy
 (train_possession's "both") = 60 runs.
 
+With --dfl, DFL open-data matches are added (their dead flag comes from the provider's tracking, the
+same kind of label as the challenge's): ball in stoppages as tracked or blanked x dropout 20% / 40%
+x tracking clean / noisy = 8 runs each, scored against the provider's ball status and possession
+flag. The score is then half the Metrica mean and half the DFL mean (each game weighted equally
+within its dataset), so neither source decides alone.
+
 Rule, fixed before running: one setting at a time, in the order of SEARCH, each over its list of
-values with the others held; the value with the highest mean spellF1 over the 60 runs wins; within
-TIE of the best counts as a tie, and a tie keeps the current value. Two passes over the list. The
-Smart Tagging settings are left alone, as the sample games have no tags.
+values with the others held; the value with the highest score wins; within TIE of the best counts
+as a tie, and a tie keeps the current value. Two passes over the list. The Smart Tagging settings
+are left alone, as no external game has tags.
 
 Prints aggregates only, and the games are external, so the output is safe to share.
 """
@@ -37,6 +44,8 @@ sys.path.insert(0, os.path.join(ROOT, "deadball"))
 from deadball import evaluate, features, labels, rules  # noqa: E402
 import run as deadball_run  # noqa: E402
 import tune as deadball_tune  # noqa: E402
+from deadball import loaders  # noqa: E402
+from rondo import check_dfl  # noqa: E402
 
 warnings.filterwarnings("ignore")
 
@@ -69,9 +78,22 @@ RUNS = []    # (game, deadball features, fps, match, truth), built once, shared 
 MODEL = None
 
 
-def build():
+def build(dfl_matches=()):
     global MODEL
     MODEL = possession.load_model()
+    for g, match_id in enumerate(dfl_matches):
+        meta = os.path.join(check_dfl.DFL, match_id + "_meta.xml")
+        frames, dead, owner = loaders.load_dfl_full(meta, meta.replace("_meta", "_tracking"))
+        truth = check_dfl.truth_codes(dead, owner)
+        for s, (in_stoppages, rate) in enumerate([(v, r) for v in ("tracked", "blanked")
+                                                  for r in evaluate.DROPOUT_RATES]):
+            x = check_dfl.blank_dead(frames, dead) if in_stoppages == "blanked" else frames
+            x = evaluate.add_ball_dropout(x, dead, rate=rate)
+            f = features.compute(x)
+            clean = tp.match_from_frames(x)
+            for k, noise in enumerate(NOISE):
+                match = tp.add_noise(clean, *tp.NOISE[noise], seed=6000 + 1000 * g + 10 * s + k)
+                RUNS.append(("dfl_" + match_id, f, x.fps, match, truth))
     for g, (name, frames, dead) in enumerate(deadball_run.sample_games()):
         truth = tp.sample_truth(name, dead)
         restarts = labels.restarts_from_events(deadball_run.restart_file(name))
@@ -100,12 +122,20 @@ def evaluate_params(pool, params):
     by_game = {}
     for name, score in results:
         by_game.setdefault(name, []).append(score)
-    return float(np.mean([s for _, s in results])), {g: float(np.mean(v)) for g, v in by_game.items()}
+    games = {g: float(np.mean(v)) for g, v in by_game.items()}
+    metrica = [v for g, v in games.items() if not g.startswith("dfl_")]
+    dfl = [v for g, v in games.items() if g.startswith("dfl_")]
+    score = float(np.mean(metrica)) if not dfl else 0.5 * float(np.mean(metrica)) + 0.5 * float(np.mean(dfl))
+    return score, games
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--dfl", nargs="*", default=[], help="DFL match ids to add, e.g. J03WMX")
+    args = parser.parse_args()
     started = time.time()
-    build()
+    build(args.dfl)
     print("{} runs built in {:.0f} s".format(len(RUNS), time.time() - started), flush=True)
     params = dict(rules.PARAMS)
     with multiprocessing.get_context("fork").Pool() as pool:

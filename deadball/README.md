@@ -82,9 +82,10 @@ smaller windows it falls back to a scrolling page.
 `samples` and `dfl` add ball dropout in bursts by default, so about 30% of live frames have no ball,
 as automatic tracking loses it. `--no-dropout` scores on the clean ball track.
 
-## Where it stands (2026-11-12)
+## Where it stands (2026-11-14)
 
-Every parameter is tuned on Metrica's three sample games and nothing else. That's what the
+Every parameter is tuned on external data and nothing else: Metrica's three sample games, plus, in
+the last re-tune, four DFL open-data matches. That's what the
 organisers' rules clarification of 2026-11-06 requires: no training, fitting or calibrating on the
 challenge match's ground truth or video, and every tuned value from external data.
 
@@ -94,10 +95,10 @@ On the sample games, with 30% live-play dropout (seed 0, `run.py samples`):
 |---|---|---|---|
 | metrica_1 | 0.899 | 100 / 94 | 0.271 |
 | metrica_2 | 0.824 | 100 / 87 | 0.277 |
-| metrica_3 | 0.856 | 101 / 86 | 0.255 |
+| metrica_3 | 0.847 | 101 / 88 | 0.255 |
 
-Over the 10 stress scenarios `tune.py` uses (below), the mean stoppage F1 is 0.778 and the worst
-scenario is 0.737 (settings after both re-tunes below).
+Over the 10 stress scenarios `tune.py` uses (below), the mean stoppage F1 is 0.777 and the worst
+scenario is 0.732 (settings after all the re-tunes below).
 
 Stoppage F1 is the challenge's own spellF1 code, applied to dead-ball runs: stoppages are matched by
 temporal IoU and the F1 is averaged over IoU thresholds 0.3-0.7.
@@ -162,6 +163,17 @@ and scoring spellF1, one setting at a time, two passes, with the same tie rule. 
 Re-running `tune.py` on its own would undo this, so run `tune_dead_ball` after it. Re-run on top of
 the v4 possession model and the official-definition labels, it changed nothing.
 
+### Re-tune with DFL added (2026-11-14, `rondo/tune_dead_ball.py --dfl ...`)
+
+The same tuner on top of the v5 possession model, with four DFL matches added (J03WMX, J03WN1,
+J03WOH, J03WOY; 8 degraded runs each, scored against the provider's ball status and possession
+flag) and the score set to half the sample-game mean, half the DFL mean. Rule fixed before running:
+keep a change only if the three DFL matches it never saw (J03WPY, J03WQQ, J03WR9) do not get worse.
+It changed `w_ball_still` 0.5 -> 1.5 (0.606 -> 0.611, all four DFL matches better), and the three
+unseen matches improved too (0.568 -> 0.581, each one better), so it was kept. Stoppage F1 on its own
+barely moves (0.778 -> 0.777 over the 10 scenarios): the change places stoppage edges better for
+spellF1 rather than finding more stoppages.
+
 ### DFL open data (independent check)
 
 `python get_dfl.py` files the hand-downloaded DFL XMLs (Figshare blocks scripted downloads), and
@@ -178,8 +190,8 @@ against the provider's own ball status. Never tuned on: stoppage F1 0.856 over 2
   so it is not a score, and the rules forbid tuning on it.
 - No constants tied to frames of BAR-ATH. The 2nd-half pre-kickoff gap should come out as dead from
   the kick-off shape and the empty or slow pitch.
-- Edge-snapping windows were tuned with `scratch/sweep_edges.py` on the sample games at 30%
-  dropout and were not re-run in the 2026-11-12 re-tune.
+- Edge-snapping windows were first tuned with `scratch/sweep_edges.py` on the sample games at 30%
+  dropout, then re-tuned for spellF1 by `rondo/tune_dead_ball.py`.
 
 ## Layout
 
@@ -200,5 +212,5 @@ scratch/               edge sweep (sweep_edges.py), stress grid (stress.py) and 
 
 ## Next
 
-1. Get the DFL matches and check the parameters on them, especially the latch weight.
-2. Replace the hand-weighted score with a small classifier trained on DFL + sample-game labels.
+1. Replace the hand-weighted score with a small classifier trained on DFL + sample-game labels.
+   (The DFL matches are now in, and the settings were re-tuned with four of them.)

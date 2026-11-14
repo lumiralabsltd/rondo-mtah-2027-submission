@@ -10,7 +10,7 @@ X is a real tool on the ranking metric: the scorer replaces an X with the previo
 inside a possession (ball lost behind a crowd) X is free and safer than a guess; at a hand-over,
 guess, or the old team gets carried across. See EVALUATION.md "How an abstention is scored".
 
-Version 4 — a model learned on external data only (Metrica's open sample games):
+Version 5 — a model learned on external data only (Metrica's open sample games):
 
   1. Clean the ball track: each seen ball position is averaged with its neighbours (5 frames,
      which takes out tracking jitter), and gaps of up to 1 s inside live play are filled with a
@@ -26,8 +26,13 @@ Version 4 — a model learned on external data only (Metrica's open sample games
   4. Touch sequence: the team of the last two and the next two touches, and touches per team in
      the 0.5 / 1 / 3 s either side. A lone touch by one team between two of the other's is a
      deflection; two in a row is control (v4).
-  5. A logistic regression with no intercept (so neither team is favoured) turns those into one
-     score per frame: the log-odds that Barça has the ball.
+     Team shape: how spread out each team is, which way the two blocks are moving, and how far
+     into either half play is, again with copies that only count when the ball is missing or
+     filled in. The team with the ball spreads out and pushes up; the other packs in (v5).
+  5. A small neural network (one hidden layer of 24) turns those into one score per frame: the
+     log-odds that Barça has the ball. It is built as g(x) - g(-x), so swapping the teams flips the
+     score exactly and neither team is favoured (v5; v4 used a logistic regression). Five copies,
+     trained the same way from different random starts, are averaged.
   6. For each stretch of live play, a two-state model (H / A) picks the labelling that agrees most
      with the scores, paying SWITCH_COST for every change of possession (Viterbi).
   7. A stretch of play with no ball information at all is X.
@@ -40,11 +45,10 @@ possession as much as a 30 s one. The organisers' rules clarification (2026-11-0
 training or tuning on our match's ground truth or video, and nothing here has seen either. The
 constants below are fixed design choices, not tuned values.
 
+Version 4 (commit 6be6468) was all of this without team shape.
 Version 3 (commit a25bec1) was steps 1-3 and 5-7, trained on every touch with equal frame weights.
 Version 2 (commit f91eff9) was step 6 alone, on "nearest player within 3 m" evidence.
 
-Ideas not done yet:
-  - team shape (the side in possession spreads out) for the stretches with no ball
 """
 
 import json
@@ -72,14 +76,22 @@ TOUCHES = ((3, 5.0, 1.5), (3, 10.0, 2.0),      # (frames either side, velocity c
 SEQUENCE = ((3, 5.0, 1.5), (6, 10.0, 2.0))     # the touches the touch-sequence features use
 SEQUENCE_FADE = 50                             # frames
 SEQUENCE_WINDOWS = (12, 25, 75)                # frames, touches per team before / after
+SHAPE_MIN_PLAYERS = 5                          # per team, or the shape features are 0
+SHAPE_SMOOTH = 12                              # frames either side
+SHAPE_DIRECTION = 3000                         # frames either side, to tell which way each team attacks
+SHAPE_VELOCITY_K = 5                           # frames either side, for player speeds
 
 
 def load_model(path=MODEL_PATH):
     with open(path) as handle:
         model = json.load(handle)
-    return dict(scene_llr=np.array(model["scene_llr"], dtype=np.float64),
-                weights=np.array(model["weights"], dtype=np.float64),
-                switch_cost=float(model["switch_cost"]))
+    out = dict(kind=model.get("kind", "logistic"),
+               scene_llr=np.array(model["scene_llr"], dtype=np.float64),
+               switch_cost=float(model["switch_cost"]))
+    for key in ("weights", "W1", "b1", "W2", "scale"):
+        if key in model:
+            out[key] = np.array(model[key], dtype=np.float64)
+    return out
 
 
 def predict_team(match, alive, model=None):
@@ -92,7 +104,25 @@ def predict_team(match, alive, model=None):
 def frame_scores(geo, alive, model):
     """Per-frame log-odds that Barça has the ball. einsum rather than @: same numbers on every
     machine (no BLAS), and no spurious macOS matmul warnings."""
-    return np.einsum("ij,j->i", features(geo, alive, model["scene_llr"]), model["weights"])
+    x = features(geo, alive, model["scene_llr"])
+    if model.get("kind", "logistic") == "logistic":
+        return np.einsum("ij,j->i", x, model["weights"])
+    return mlp_logit(model, x)
+
+
+def mlp_logit(model, x):
+    """g(x) - g(-x) with g = one tanh layer: antisymmetric, so neither team is favoured. With
+    several networks stacked along a first axis (one per random start), their mean."""
+    xs = x / model["scale"]
+    W1, b1, W2 = model["W1"], model["b1"], model["W2"]
+    if W1.ndim == 2:
+        W1, b1, W2 = W1[None], b1[None], W2[None]
+    total = np.zeros(len(x))
+    for k in range(len(W1)):
+        pre = np.einsum("ij,jk->ik", xs, W1[k])
+        hidden = np.tanh(pre + b1[k]) - np.tanh(-pre + b1[k])
+        total += np.einsum("ik,k->i", hidden, W2[k])
+    return total / len(W1)
 
 
 def decode(score, playing, informed, switch_cost):
@@ -141,7 +171,59 @@ def geometry(match, alive):
         before[k:] = (seen_xy[k:] - seen_xy[:-k]) * match.fps / k
         after[:-k] = (seen_xy[k:] - seen_xy[:-k]) * match.fps / k
         change[k] = np.nan_to_num(np.sqrt(np.sum((after - before) ** 2, axis=1)))
-    return dict(scene=scene, team=team, nearest=nearest, change=change)
+    geo = dict(scene=scene, team=team, nearest=nearest, change=change)
+    geo["shape"] = team_shape(match, alive, geo)
+    return geo
+
+
+def team_shape(match, alive, geo):
+    """(n, 10) signed team-shape features (+ = Barça side), the last 5 counting only without a ball."""
+    p = match.metres(match.players[:, :, :2].astype(np.float64))
+    x, y = p[..., 0], p[..., 1]
+    seen = ~np.isnan(x)
+    k = SHAPE_VELOCITY_K
+    vx = np.full_like(x, np.nan)
+    vx[k:-k] = (x[2 * k:] - x[:-2 * k]) * match.fps / (2 * k)
+    teams = {}
+    for side, mask in ((HOME, match.team_of_slot == HOME), (AWAY, match.team_of_slot != HOME)):
+        w = seen[:, mask]
+        mx, count = _masked_mean(x[:, mask], w)
+        my, _ = _masked_mean(y[:, mask], w)
+        sx = np.sqrt(_masked_mean((x[:, mask] - mx[:, None]) ** 2, w)[0])
+        sy = np.sqrt(_masked_mean((y[:, mask] - my[:, None]) ** 2, w)[0])
+        v, _ = _masked_mean(vx[:, mask], w & ~np.isnan(vx[:, mask]))
+        teams[side] = (mx, sx, sy, v, count)
+    mx_h, sx_h, sy_h, v_h, c_h = teams[HOME]
+    mx_a, sx_a, sy_a, v_a, c_a = teams[AWAY]
+    attack_h = np.sign(_rolling_mean(mx_a, SHAPE_DIRECTION) - _rolling_mean(mx_h, SHAPE_DIRECTION))
+    attack_h = np.where(np.isnan(attack_h), 0.0, attack_h)   # +1 when Barça attacks towards +x
+    enough = (c_h >= SHAPE_MIN_PLAYERS) & (c_a >= SHAPE_MIN_PLAYERS)
+    raw = [(sx_h * sy_h - sx_a * sy_a) / 200.0,                       # Barça more spread out
+           (sx_h - sx_a) / 10.0, (sy_h - sy_a) / 10.0,                 # ... in length, in width
+           (v_h + v_a) * attack_h / 5.0,                               # both blocks moving to Athletic's goal
+           ((mx_h + mx_a) / 2 - match.pitch[0] / 2) * attack_h / 50.0]  # play in Athletic's half
+    smooth = [np.where(enough & alive, np.nan_to_num(_rolling_mean(np.where(enough, f, np.nan), SHAPE_SMOOTH)), 0.0)
+              for f in raw]
+    no_ball = ((geo["scene"] == 0) | ((geo["scene"] - 1) % 2 == 1)).astype(np.float64)
+    return np.stack(smooth + [f * no_ball for f in smooth], axis=1)
+
+
+def _masked_mean(values, mask):
+    """Row means over the entries where mask is True: (mean, count); NaN where count is 0."""
+    count = np.sum(mask, axis=1)
+    total = np.nansum(np.where(mask, values, 0.0), axis=1)
+    return np.where(count > 0, total / np.maximum(count, 1), np.nan), count
+
+
+def _rolling_mean(x, half):
+    """Centred mean over +-half frames, ignoring NaN; NaN where the window has nothing."""
+    ok = ~np.isnan(x)
+    total = np.concatenate(([0.0], np.cumsum(np.where(ok, x, 0.0))))
+    count = np.concatenate(([0], np.cumsum(ok)))
+    index = np.arange(len(x))
+    lo, hi = np.maximum(index - half, 0), np.minimum(index + half + 1, len(x))
+    n = count[hi] - count[lo]
+    return np.where(n > 0, (total[hi] - total[lo]) / np.maximum(n, 1), np.nan)
 
 
 def smooth_ball(xy, half=SMOOTH_HALF):
@@ -192,7 +274,7 @@ def features(geo, alive, scene_llr):
             columns += list(last_and_next(touch, tau))
     for k, change, within in SEQUENCE:
         columns += touch_sequence(touches(geo, alive, k, change, within))
-    return np.stack(columns, axis=1)
+    return np.concatenate([np.stack(columns, axis=1), geo["shape"]], axis=1)
 
 
 def touches(geo, alive, k, change, within):

@@ -8,9 +8,9 @@ How it works, how every value was chosen, and the results: **[Rondo.md](Rondo.md
 
 In one line: a rule-based dead-ball detector, then a possession model learned on Metrica's open
 sample games under the official definition of a change of possession (a scene table, context,
-touch and touch-sequence features, logistic regression, then a two-state Viterbi). Every tuned or
-learned value comes from external data, never from the challenge match, its ground truth or its
-video.
+touch, touch-sequence and team-shape features, an average of five small neural networks, then a
+two-state Viterbi). Every tuned or learned value comes from external data about other games, never from the
+challenge match, its ground truth or its video.
 
 ## What is here
 
@@ -18,10 +18,10 @@ video.
 rondo/                    our pipeline
   match.py                loads the challenge tracking into arrays (cached in data/cache/)
   dead_ball.py            role 1: predict_alive(match), a thin wrapper around deadball/
-  possession.py           role 2: predict_team(match, alive), the v4 possession model
+  possession.py           role 2: predict_team(match, alive), the v5 possession model
   possession_model.json   that model's learned values (from train_possession.py)
   train_possession.py     trains the possession model on Metrica's sample games
-  tune_dead_ball.py       tunes the dead-ball settings for spellF1 on Metrica's sample games
+  tune_dead_ball.py       tunes the dead-ball settings for spellF1 on the sample games and DFL
   check_dfl.py            scores the whole pipeline on DFL open data (a second check)
   pipeline.py             writes evaluation/results/Rondo.csv, validates it, scores the public 5 min
 deadball/                 the dead-ball detector (see deadball/README.md), its own tuner, a viewer
@@ -53,15 +53,17 @@ file every time.
 
 ```bash
 .venv/bin/python deadball/get_metrica.py      # Metrica sample games 1-3 (about 215 MB)
-.venv/bin/python -m rondo.train_possession    # possession model, about 4 minutes
-.venv/bin/python -m rondo.tune_dead_ball      # dead-ball settings for spellF1, about 30-60 minutes
 (cd deadball && ../.venv/bin/python tune.py)  # dead-ball settings for stoppage F1, about 15 minutes
+.venv/bin/python -m rondo.tune_dead_ball --dfl J03WMX J03WN1 J03WOH J03WOY   # for spellF1, about 1.5 hours
+.venv/bin/python -m rondo.train_possession    # possession model, about 1.5 hours
+.venv/bin/python -m rondo.check_dfl           # whole pipeline on the 7 DFL matches, about 15 minutes
 ```
 
-`train_possession.py` rewrites `rondo/possession_model.json` (byte for byte the same on our
-machine). The tuners print what they would change; values are set in `deadball/deadball/rules.py`.
-For the DFL check, `deadball/get_dfl.py` explains how to fetch those files by hand (Figshare blocks
-scripted downloads).
+That is the order we used: the spellF1 tune has the last word over `tune.py`, and the possession
+model is trained on top of the final dead-ball settings. The tuners print what they would change;
+values are set in `deadball/deadball/rules.py`. `train_possession.py` rewrites
+`rondo/possession_model.json` (byte for byte the same on our machine). The DFL files are fetched
+by hand (Figshare blocks scripted downloads): `deadball/get_dfl.py` explains how.
 
 ## Credits and licence
 
