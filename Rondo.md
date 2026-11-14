@@ -17,7 +17,9 @@ Section 6 says exactly how, including what we looked at before that clarificatio
 | Public 5 minutes (a code check, not a target) | 0.627 | 0.888 |
 | `baseline_smooth50` on the same 5 minutes | 0.326 | 0.621 |
 
-Roles: dead ball, Sukh; who has the ball, David and Nick; pipeline, checks and write-up, Nick.
+Team: Nikolaos Efthymiopoulos, David Small, Sukhpinder Ubhi. Roles: dead ball, Sukhpinder Ubhi;
+who has the ball, David Small and Nikolaos Efthymiopoulos; pipeline, checks and write-up,
+Nikolaos Efthymiopoulos.
 
 ---
 
